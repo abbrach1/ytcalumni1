@@ -580,30 +580,32 @@ struct EventCard: View {
 
 struct AlumniPhotoCard: View {
     let photo: AlumniPhoto
-    
+
     var body: some View {
         VStack(spacing: 0) {
-            // Photo
-            AsyncImage(url: URL(string: photo.url)) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                case .failure:
-                    Color.navy.opacity(0.2)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .foregroundColor(.navy.opacity(0.3))
-                        )
-                default:
-                    Color.navy.opacity(0.1)
-                        .overlay(ProgressView())
-                }
-            }
-            .frame(height: 110)
-            .clipped()
-            
+            // Photo - use overlay pattern to contain scaledToFill within bounds
+            Color.navy.opacity(0.1)
+                .frame(height: 110)
+                .overlay(
+                    AsyncImage(url: URL(string: photo.url)) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        case .failure:
+                            Color.navy.opacity(0.2)
+                                .overlay(
+                                    Image(systemName: "photo")
+                                        .foregroundColor(.navy.opacity(0.3))
+                                )
+                        default:
+                            ProgressView()
+                        }
+                    }
+                )
+                .clipped()
+
             // Info - only show if there's actual data
             if (photo.name != nil && !photo.name!.isEmpty) || (photo.year != nil && !photo.year!.isEmpty) {
                 VStack(alignment: .leading, spacing: 2) {
