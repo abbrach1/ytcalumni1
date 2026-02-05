@@ -109,7 +109,8 @@ struct EventsView: View {
 // MARK: - Event Detail Card
 struct EventDetailCard: View {
     let event: Event
-    
+    @State private var showExpandedImage = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Image header or gradient
@@ -122,9 +123,24 @@ struct EventDetailCard: View {
                             .scaledToFill()
                             .frame(height: 160)
                             .clipped()
+                            .overlay(alignment: .topTrailing) {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .padding(6)
+                                    .background(Color.black.opacity(0.5))
+                                    .cornerRadius(6)
+                                    .padding(8)
+                            }
+                            .onTapGesture {
+                                showExpandedImage = true
+                            }
                     default:
                         gradientHeader
                     }
+                }
+                .fullScreenCover(isPresented: $showExpandedImage) {
+                    ExpandedEventImageView(imageUrl: imageUrl, eventName: event.eventName)
                 }
             } else {
                 gradientHeader
@@ -478,6 +494,126 @@ struct SimchaSubmissionForm: View {
         message = ""
         selectedImage = nil
         selectedImageData = nil
+    }
+}
+
+// MARK: - Expanded Event Image View
+struct ExpandedEventImageView: View {
+    let imageUrl: String
+    let eventName: String
+    @Environment(\.dismiss) var dismiss
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if let url = URL(string: imageUrl) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .scaleEffect(scale)
+                            .offset(offset)
+                            .gesture(
+                                MagnifyGesture()
+                                    .onChanged { value in
+                                        scale = lastScale * value.magnification
+                                    }
+                                    .onEnded { value in
+                                        lastScale = scale
+                                        if scale < 1.0 {
+                                            withAnimation(.spring()) {
+                                                scale = 1.0
+                                                lastScale = 1.0
+                                                offset = .zero
+                                                lastOffset = .zero
+                                            }
+                                        }
+                                    }
+                                    .simultaneously(
+                                        with: DragGesture()
+                                            .onChanged { value in
+                                                offset = CGSize(
+                                                    width: lastOffset.width + value.translation.width,
+                                                    height: lastOffset.height + value.translation.height
+                                                )
+                                            }
+                                            .onEnded { _ in
+                                                lastOffset = offset
+                                                if scale <= 1.0 {
+                                                    withAnimation(.spring()) {
+                                                        offset = .zero
+                                                        lastOffset = .zero
+                                                    }
+                                                }
+                                            }
+                                    )
+                            )
+                            .onTapGesture(count: 2) {
+                                withAnimation(.spring()) {
+                                    if scale > 1.0 {
+                                        scale = 1.0
+                                        lastScale = 1.0
+                                        offset = .zero
+                                        lastOffset = .zero
+                                    } else {
+                                        scale = 2.5
+                                        lastScale = 2.5
+                                    }
+                                }
+                            }
+                    case .failure:
+                        VStack(spacing: 12) {
+                            Image(systemName: "photo.badge.exclamationmark")
+                                .font(.largeTitle)
+                                .foregroundColor(.white.opacity(0.5))
+                            Text("Failed to load image")
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                    default:
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(1.5)
+                    }
+                }
+            }
+
+            // Close button and event name overlay
+            VStack {
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.title3.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(10)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Circle())
+                    }
+                    .padding(16)
+                }
+
+                Spacer()
+
+                Text(eventName)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(10)
+                    .padding(.bottom, 40)
+            }
+        }
+        .statusBarHidden()
     }
 }
 
