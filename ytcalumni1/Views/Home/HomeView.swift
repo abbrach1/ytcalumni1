@@ -99,13 +99,38 @@ struct HomeView: View {
     // MARK: - Header Section
     private var headerSection: some View {
         ZStack(alignment: .bottom) {
-            // Simple gradient background for now
-            LinearGradient(
-                colors: [Color.navy, Color.navyLight],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .frame(height: 350)
+            // Carousel or gradient background
+            if !carouselImages.isEmpty {
+                TabView(selection: $currentCarouselIndex) {
+                    ForEach(Array(carouselImages.enumerated()), id: \.element.id) { index, image in
+                        AsyncImage(url: URL(string: image.url)) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            case .failure:
+                                Color.navy
+                            default:
+                                Color.navy.opacity(0.5)
+                                    .overlay(ProgressView().tint(.white))
+                            }
+                        }
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .onReceive(timer) { _ in
+                    withAnimation(.easeInOut(duration: 0.8)) {
+                        currentCarouselIndex = (currentCarouselIndex + 1) % max(carouselImages.count, 1)
+                    }
+                }
+            } else {
+                LinearGradient(
+                    colors: [Color.navy, Color.navyLight],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
             
             // Overlay gradient for text readability
             LinearGradient(
@@ -163,6 +188,7 @@ struct HomeView: View {
             }
             .padding(.bottom, 40)
         }
+        .frame(height: 350)
         .frame(maxWidth: .infinity)
         .clipped()
     }
@@ -411,21 +437,27 @@ struct HomeView: View {
         guard let userId = Auth.auth().currentUser?.uid else { return }
         
         do {
-            let snapshot = try await Firestore.firestore()
+            // Website structure: users/{uid}/preferences/playbackPositions with positions map
+            let doc = try await Firestore.firestore()
                 .collection("users")
                 .document(userId)
-                .collection("playbackPositions")
-                .getDocuments()
+                .collection("preferences")
+                .document("playbackPositions")
+                .getDocument()
             
-            var positions: [String: Double] = [:]
-            for doc in snapshot.documents {
-                if let position = doc.data()["position"] as? Double {
-                    positions[doc.documentID] = position
-                    // Also update local cache
-                    UserDefaults.standard.set(position, forKey: "playback_position_\(doc.documentID)")
+            if let data = doc.data(),
+               let positions = data["positions"] as? [String: Any] {
+                var result: [String: Double] = [:]
+                for (key, value) in positions {
+                    if let position = value as? Double {
+                        result[key] = position
+                        // Update local cache
+                        UserDefaults.standard.set(position, forKey: "playback_position_\(key)")
+                    }
                 }
+                playbackPositions = result
+                print("✅ HomeView: Loaded \(result.count) playback positions from Firebase")
             }
-            playbackPositions = positions
         } catch {
             print("Error loading playback positions: \(error)")
         }
@@ -580,32 +612,30 @@ struct EventCard: View {
 
 struct AlumniPhotoCard: View {
     let photo: AlumniPhoto
-
+    
     var body: some View {
         VStack(spacing: 0) {
-            // Photo - use overlay pattern to contain scaledToFill within bounds
-            Color.navy.opacity(0.1)
-                .frame(height: 110)
-                .overlay(
-                    AsyncImage(url: URL(string: photo.url)) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        case .failure:
-                            Color.navy.opacity(0.2)
-                                .overlay(
-                                    Image(systemName: "photo")
-                                        .foregroundColor(.navy.opacity(0.3))
-                                )
-                        default:
-                            ProgressView()
-                        }
-                    }
-                )
-                .clipped()
-
+            // Photo
+            AsyncImage(url: URL(string: photo.url)) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                case .failure:
+                    Color.navy.opacity(0.2)
+                        .overlay(
+                            Image(systemName: "photo")
+                                .foregroundColor(.navy.opacity(0.3))
+                        )
+                default:
+                    Color.navy.opacity(0.1)
+                        .overlay(ProgressView())
+                }
+            }
+            .frame(height: 110)
+            .clipped()
+            
             // Info - only show if there's actual data
             if (photo.name != nil && !photo.name!.isEmpty) || (photo.year != nil && !photo.year!.isEmpty) {
                 VStack(alignment: .leading, spacing: 2) {

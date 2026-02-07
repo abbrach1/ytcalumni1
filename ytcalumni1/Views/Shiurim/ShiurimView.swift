@@ -1,4 +1,6 @@
 import SwiftUI
+import FirebaseAuth
+import FirebaseFirestore
 
 struct ShiurimView: View {
     @EnvironmentObject var audioPlayer: AudioPlayerManager
@@ -13,12 +15,8 @@ struct ShiurimView: View {
     @State private var showInProgressOnly = false
     @State private var sortOrder: SortOrder = .dateDescending
     @State private var showFilters = false
-    
-    @AppStorage("saved-shiurim") private var savedShiurimData: Data = Data()
-    
-    private var savedShiurim: Set<String> {
-        (try? JSONDecoder().decode(Set<String>.self, from: savedShiurimData)) ?? []
-    }
+    @State private var savedShiurimIds: Set<String> = []
+    @State private var playbackPositions: [String: Double] = [:]
     
     enum SortOrder: String, CaseIterable {
         case dateDescending = "Newest First"
@@ -71,7 +69,7 @@ struct ShiurimView: View {
         if showSavedOnly {
             result = result.filter { shiur in
                 guard let id = shiur.id else { return false }
-                return savedShiurim.contains(id)
+                return savedShiurimIds.contains(id)
             }
         }
         
@@ -79,7 +77,7 @@ struct ShiurimView: View {
         if showInProgressOnly {
             result = result.filter { shiur in
                 guard let id = shiur.id else { return false }
-                return audioPlayer.getSavedPosition(for: id) > 0
+                return (playbackPositions[id] ?? 0) > 0
             }
         }
         
@@ -269,8 +267,9 @@ struct ShiurimView: View {
                         ForEach(filteredShiurim) { shiur in
                             ShiurRowView(
                                 shiur: shiur,
-                                isSaved: savedShiurim.contains(shiur.id ?? ""),
+                                isSaved: savedShiurimIds.contains(shiur.id ?? ""),
                                 isCurrentlyPlaying: audioPlayer.currentShiur?.id == shiur.id,
+                                savedPosition: playbackPositions[shiur.id ?? ""] ?? 0,
                                 onToggleSave: { toggleSave(shiur) }
                             )
                         }
@@ -284,9 +283,13 @@ struct ShiurimView: View {
         .navigationBarHidden(true)
         .task {
             await loadShiurim()
+            await loadSavedShiurim()
+            await loadPlaybackPositions()
         }
         .refreshable {
             await loadShiurim()
+            await loadSavedShiurim()
+            await loadPlaybackPositions()
         }
         .sheet(isPresented: $showFilters) {
             AdvancedFiltersSheet(
@@ -311,6 +314,67 @@ struct ShiurimView: View {
         isLoading = false
     }
     
+    private func loadSavedShiurim() async {
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        
+        do {
+            // Website structure: users/{uid}/preferences/savedShiurim with savedShiurIds array
+            let docRef = Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("preferences")
+                .document("savedShiurim")
+            
+            let doc = try await docRef.getDocument()
+            
+            if let data = doc.data(), let savedIds = data["savedShiurIds"] as? [String] {
+                await MainActor.run {
+                    savedShiurimIds = Set(savedIds)
+                }
+                print("✅ Loaded \(savedIds.count) saved shiurim from Firebase")
+            } else {
+                await MainActor.run {
+                    savedShiurimIds = []
+                }
+            }
+        } catch {
+            print("Error loading saved shiurim: \(error)")
+        }
+    }
+    
+    private func loadPlaybackPositions() async {
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        
+        do {
+            // Website structure: users/{uid}/preferences/playbackPositions with positions map
+            let doc = try await Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("preferences")
+                .document("playbackPositions")
+                .getDocument()
+            
+            if let data = doc.data(),
+               let positions = data["positions"] as? [String: Any] {
+                var result: [String: Double] = [:]
+                for (key, value) in positions {
+                    if let position = value as? Double {
+                        result[key] = position
+                        // Update local cache
+                        UserDefaults.standard.set(position, forKey: "playback_position_\(key)")
+                    }
+                }
+                
+                await MainActor.run {
+                    playbackPositions = result
+                }
+                print("✅ Loaded \(result.count) playback positions from Firebase")
+            }
+        } catch {
+            print("Error loading playback positions: \(error)")
+        }
+    }
+    
     private func clearFilters() {
         selectedRebbeFilter = nil
         selectedTagFilter = nil
@@ -321,17 +385,32 @@ struct ShiurimView: View {
     }
     
     private func toggleSave(_ shiur: Shiur) {
-        guard let id = shiur.id else { return }
+        guard let id = shiur.id,
+              let userId = Auth.auth().currentUser?.uid else { return }
         
-        var saved = savedShiurim
-        if saved.contains(id) {
-            saved.remove(id)
+        // Website structure: users/{uid}/preferences/savedShiurim with savedShiurIds array
+        let docRef = Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("preferences")
+            .document("savedShiurim")
+        
+        if savedShiurimIds.contains(id) {
+            // Remove from saved
+            savedShiurimIds.remove(id)
+            docRef.updateData([
+                "savedShiurIds": FieldValue.arrayRemove([id]),
+                "lastUpdated": FieldValue.serverTimestamp(),
+                "syncedAt": FieldValue.serverTimestamp()
+            ])
         } else {
-            saved.insert(id)
-        }
-        
-        if let encoded = try? JSONEncoder().encode(saved) {
-            savedShiurimData = encoded
+            // Add to saved
+            savedShiurimIds.insert(id)
+            docRef.setData([
+                "savedShiurIds": FieldValue.arrayUnion([id]),
+                "lastUpdated": FieldValue.serverTimestamp(),
+                "syncedAt": FieldValue.serverTimestamp()
+            ], merge: true)
         }
     }
 }
@@ -389,12 +468,8 @@ struct ShiurRowView: View {
     let shiur: Shiur
     let isSaved: Bool
     let isCurrentlyPlaying: Bool
+    let savedPosition: TimeInterval
     let onToggleSave: () -> Void
-    
-    private var savedPosition: TimeInterval {
-        guard let id = shiur.id else { return 0 }
-        return audioPlayer.getSavedPosition(for: id)
-    }
     
     private var hasProgress: Bool {
         savedPosition > 0
@@ -481,7 +556,7 @@ struct ShiurRowView: View {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.caption2)
                         .foregroundColor(.gold)
-                    Text("Resume from \(audioPlayer.formatTime(savedPosition))")
+                    Text("Resume from \(formatTime(savedPosition))")
                         .font(.caption2)
                         .foregroundColor(.navy.opacity(0.6))
                 }
@@ -545,6 +620,13 @@ struct ShiurRowView: View {
         .background(Color.white)
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
+    }
+    
+    private func formatTime(_ time: TimeInterval) -> String {
+        guard !time.isNaN && !time.isInfinite else { return "0:00" }
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 

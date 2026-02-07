@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BD25725E2F354F7B00401186 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = BD25725D2F354F7B00401186 /* FirebaseMessaging */; };
 		BDA724172F314DEF007B11D6 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = BDA724162F314DEF007B11D6 /* FirebaseAuth */; };
 		BDA724192F314DEF007B11D6 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = BDA724182F314DEF007B11D6 /* FirebaseFirestore */; };
 		BDA7241B2F314DEF007B11D6 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = BDA7241A2F314DEF007B11D6 /* FirebaseStorage */; };
@@ -42,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BD25725E2F354F7B00401186 /* FirebaseMessaging in Frameworks */,
 				BDA724172F314DEF007B11D6 /* FirebaseAuth in Frameworks */,
 				BDA724192F314DEF007B11D6 /* FirebaseFirestore in Frameworks */,
 				BDA7241B2F314DEF007B11D6 /* FirebaseStorage in Frameworks */,
@@ -51,10 +53,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		BD25725C2F354F7B00401186 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		BDA723AF2F31478A007B11D6 = {
 			isa = PBXGroup;
 			children = (
 				BDA723BA2F31478A007B11D6 /* ytcalumni1 */,
+				BD25725C2F354F7B00401186 /* Frameworks */,
 				BDA723B92F31478A007B11D6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +100,7 @@
 				BDA724162F314DEF007B11D6 /* FirebaseAuth */,
 				BDA724182F314DEF007B11D6 /* FirebaseFirestore */,
 				BDA7241A2F314DEF007B11D6 /* FirebaseStorage */,
+				BD25725D2F354F7B00401186 /* FirebaseMessaging */,
 			);
 			productName = ytcalumni1;
 			productReference = BDA723B82F31478A007B11D6 /* ytcalumni1.app */;
@@ -295,7 +306,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = toraschaim.ytcalumni1;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -340,7 +351,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = toraschaim.ytcalumni1;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -392,6 +403,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		BD25725D2F354F7B00401186 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BDA724152F314DEF007B11D6 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
 		BDA724162F314DEF007B11D6 /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BDA724152F314DEF007B11D6 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;

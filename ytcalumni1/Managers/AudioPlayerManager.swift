@@ -2,6 +2,8 @@ import Foundation
 import AVFoundation
 import Combine
 import MediaPlayer
+import FirebaseAuth
+import FirebaseFirestore
 
 @MainActor
 class AudioPlayerManager: ObservableObject {
@@ -196,28 +198,203 @@ class AudioPlayerManager: ObservableObject {
         player?.volume = newVolume
     }
     
-    // MARK: - Playback Position Persistence
+    // MARK: - Playback Position Persistence (Firebase synced)
+    // Website structure: /users/{uid}/preferences/playbackPositions
+    // { positions: { "shiur_001": 245, "shiur_042": 1820 }, lastUpdated, syncedAt }
+    
     private func savePlaybackPosition() {
         guard let shiur = currentShiur, let id = shiur.id else { return }
+        
+        // Save locally for immediate access
         UserDefaults.standard.set(currentTime, forKey: "playback_position_\(id)")
+        
+        // Save to Firebase for cross-device sync (matches website structure)
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        
+        let docRef = Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("preferences")
+            .document("playbackPositions")
+        
+        // First check if document exists, then update or create
+        docRef.getDocument { [weak self] snapshot, error in
+            guard let self = self else { return }
+            
+            let now = Date().timeIntervalSince1970 * 1000 // milliseconds like website
+            
+            if let snapshot = snapshot, snapshot.exists {
+                // Document exists - use updateData with dot notation for nested field
+                docRef.updateData([
+                    "positions.\(id)": self.currentTime,
+                    "lastUpdated": now,
+                    "syncedAt": now
+                ]) { error in
+                    if let error = error {
+                        print("❌ Error updating playback position: \(error)")
+                    } else {
+                        print("✅ Updated playback position for \(id): \(self.currentTime)s")
+                    }
+                }
+            } else {
+                // Document doesn't exist - create it with setData
+                docRef.setData([
+                    "positions": [id: self.currentTime],
+                    "lastUpdated": now,
+                    "syncedAt": now
+                ]) { error in
+                    if let error = error {
+                        print("❌ Error creating playback positions doc: \(error)")
+                    } else {
+                        print("✅ Created playback positions doc with \(id): \(self.currentTime)s")
+                    }
+                }
+            }
+        }
     }
     
     private func restorePlaybackPosition(for shiur: Shiur) {
         guard let id = shiur.id else { return }
-        let savedPosition = UserDefaults.standard.double(forKey: "playback_position_\(id)")
-        if savedPosition > 0 && savedPosition < duration - 5 {
-            seek(to: savedPosition)
+        
+        // First try local storage for quick access
+        let localPosition = UserDefaults.standard.double(forKey: "playback_position_\(id)")
+        
+        // Then check Firebase for synced position
+        guard let userId = Auth.auth().currentUser?.uid else {
+            if localPosition > 0 && localPosition < duration - 5 {
+                seek(to: localPosition)
+            }
+            return
+        }
+        
+        Task {
+            do {
+                let doc = try await Firestore.firestore()
+                    .collection("users")
+                    .document(userId)
+                    .collection("preferences")
+                    .document("playbackPositions")
+                    .getDocument()
+                
+                if let data = doc.data(),
+                   let positions = data["positions"] as? [String: Any],
+                   let position = positions[id] as? Double {
+                    // Use Firebase position
+                    if position > 0 && position < duration - 5 {
+                        await MainActor.run {
+                            seek(to: position)
+                        }
+                    }
+                } else if localPosition > 0 && localPosition < duration - 5 {
+                    // Fall back to local position
+                    await MainActor.run {
+                        seek(to: localPosition)
+                    }
+                }
+            } catch {
+                // Fall back to local position on error
+                if localPosition > 0 && localPosition < duration - 5 {
+                    await MainActor.run {
+                        seek(to: localPosition)
+                    }
+                }
+            }
         }
     }
     
     private func clearPlaybackPosition() {
         guard let shiur = currentShiur, let id = shiur.id else { return }
+        
+        // Clear local
         UserDefaults.standard.removeObject(forKey: "playback_position_\(id)")
+        
+        // Clear from Firebase (remove from positions map)
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        
+        let docRef = Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("preferences")
+            .document("playbackPositions")
+        
+        docRef.updateData([
+            "positions.\(id)": FieldValue.delete(),
+            "lastUpdated": Date().timeIntervalSince1970 * 1000,
+            "syncedAt": Date().timeIntervalSince1970 * 1000
+        ]) { error in
+            if let error = error {
+                print("❌ Error clearing playback position: \(error)")
+            } else {
+                print("✅ Cleared playback position for \(id)")
+            }
+        }
     }
     
-    /// Get saved playback position for a shiur (public method for UI)
+    /// Get saved playback position for a shiur (checks both local and Firebase)
     func getSavedPosition(for shiurId: String) -> TimeInterval {
+        // Return local position for immediate UI updates
+        // Firebase position will be loaded when actually playing
         return UserDefaults.standard.double(forKey: "playback_position_\(shiurId)")
+    }
+    
+    /// Fetch saved position from Firebase (async)
+    func fetchSavedPosition(for shiurId: String) async -> TimeInterval {
+        guard let userId = Auth.auth().currentUser?.uid else {
+            return UserDefaults.standard.double(forKey: "playback_position_\(shiurId)")
+        }
+        
+        do {
+            let doc = try await Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("preferences")
+                .document("playbackPositions")
+                .getDocument()
+            
+            if let data = doc.data(),
+               let positions = data["positions"] as? [String: Any],
+               let position = positions[shiurId] as? Double {
+                // Update local cache
+                UserDefaults.standard.set(position, forKey: "playback_position_\(shiurId)")
+                return position
+            }
+        } catch {
+            print("Error fetching playback position: \(error)")
+        }
+        
+        return UserDefaults.standard.double(forKey: "playback_position_\(shiurId)")
+    }
+    
+    /// Fetch all playback positions from Firebase (for syncing on app load)
+    func fetchAllPlaybackPositions() async -> [String: Double] {
+        guard let userId = Auth.auth().currentUser?.uid else { return [:] }
+        
+        do {
+            let doc = try await Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("preferences")
+                .document("playbackPositions")
+                .getDocument()
+            
+            if let data = doc.data(),
+               let positions = data["positions"] as? [String: Any] {
+                var result: [String: Double] = [:]
+                for (key, value) in positions {
+                    if let position = value as? Double {
+                        result[key] = position
+                        // Update local cache
+                        UserDefaults.standard.set(position, forKey: "playback_position_\(key)")
+                    }
+                }
+                print("✅ Synced \(result.count) playback positions from Firebase")
+                return result
+            }
+        } catch {
+            print("Error fetching all playback positions: \(error)")
+        }
+        
+        return [:]
     }
     
     // MARK: - Now Playing Info
