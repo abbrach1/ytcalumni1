@@ -18,57 +18,60 @@ struct ContactsView: View {
     }
     
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Header
-                VStack(spacing: 8) {
-                    Text("Directory")
-                        .font(.serifHeadline())
-                        .foregroundColor(.cream)
-                    
-                    Text("Connect with Rebbeim and fellow alumni")
-                        .font(.subheadline)
-                        .foregroundColor(.cream.opacity(0.7))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
-                .background(Color.navy)
-                
-                VStack(spacing: 24) {
-                    // Tab Selector
-                    HStack(spacing: 0) {
-                        ForEach(ContactTab.allCases, id: \.self) { tab in
-                            Button(action: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    selectedTab = tab
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Header
+                    VStack(spacing: 8) {
+                        Text("Directory")
+                            .font(.serifHeadline())
+                            .foregroundColor(.cream)
+
+                        Text("Connect with Rebbeim and fellow alumni")
+                            .font(.subheadline)
+                            .foregroundColor(.cream.opacity(0.7))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 32)
+                    .background(Color.navy)
+
+                    VStack(spacing: 24) {
+                        // Tab Selector
+                        HStack(spacing: 0) {
+                            ForEach(ContactTab.allCases, id: \.self) { tab in
+                                Button(action: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        selectedTab = tab
+                                    }
+                                }) {
+                                    Text(tab.rawValue)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundColor(selectedTab == tab ? .cream : .navy.opacity(0.6))
+                                        .padding(.vertical, 10)
+                                        .padding(.horizontal, 20)
+                                        .background(selectedTab == tab ? Color.navy : Color.clear)
+                                        .cornerRadius(8)
                                 }
-                            }) {
-                                Text(tab.rawValue)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundColor(selectedTab == tab ? .cream : .navy.opacity(0.6))
-                                    .padding(.vertical, 10)
-                                    .padding(.horizontal, 20)
-                                    .background(selectedTab == tab ? Color.navy : Color.clear)
-                                    .cornerRadius(8)
                             }
                         }
+                        .padding(4)
+                        .background(Color.white)
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+
+                        // Content based on tab
+                        if selectedTab == .rebbeim {
+                            rebbeimSection
+                        } else {
+                            alumniSection(scrollProxy: scrollProxy)
+                        }
+
+                        // Contact Form
+                        contactFormSection
+                            .id("contactForm")
                     }
-                    .padding(4)
-                    .background(Color.white)
-                    .cornerRadius(12)
-                    .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
-                    
-                    // Content based on tab
-                    if selectedTab == .rebbeim {
-                        rebbeimSection
-                    } else {
-                        alumniSection
-                    }
-                    
-                    // Contact Form
-                    contactFormSection
+                    .padding(16)
                 }
-                .padding(16)
             }
         }
         .background(Color.cream.ignoresSafeArea())
@@ -122,7 +125,7 @@ struct ContactsView: View {
         }
     }
 
-    private var alumniSection: some View {
+    private func alumniSection(scrollProxy: ScrollViewProxy) -> some View {
         VStack(spacing: 16) {
             // Search bar
             HStack(spacing: 10) {
@@ -147,12 +150,26 @@ struct ContactsView: View {
                     .stroke(Color.gold.opacity(0.3), lineWidth: 1)
             )
 
-            // Edit your info button (only if user has a record)
+            // Edit or Add your info button
             if currentUserAlumniRecord != nil {
                 Button(action: { showEditSheet = true }) {
                     HStack(spacing: 8) {
                         Image(systemName: "pencil.circle.fill")
                         Text("Edit Your Info")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.gold)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            } else {
+                Button(action: {
+                    withAnimation {
+                        scrollProxy.scrollTo("contactForm", anchor: .top)
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                        Text("Add Your Info")
                             .font(.subheadline.weight(.medium))
                     }
                     .foregroundColor(.gold)
