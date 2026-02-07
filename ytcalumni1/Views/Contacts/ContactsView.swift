@@ -5,6 +5,9 @@ struct ContactsView: View {
     @EnvironmentObject var authManager: AuthManager
     
     @State private var rebbeim: [Rebbe] = []
+    @State private var alumni: [AlumniContact] = []
+    @State private var alumniSearchText = ""
+    @State private var expandedAlumniId: String?
     @State private var isLoading = true
     @State private var selectedTab: ContactTab = .rebbeim
     
@@ -93,13 +96,87 @@ struct ContactsView: View {
     }
     
     // MARK: - Alumni Section
+
+    private var filteredAlumni: [AlumniContact] {
+        if alumniSearchText.isEmpty {
+            return alumni
+        }
+        let query = alumniSearchText.lowercased()
+        return alumni.filter {
+            $0.name.lowercased().contains(query) ||
+            ($0.email?.lowercased().contains(query) ?? false) ||
+            $0.location.lowercased().contains(query)
+        }
+    }
+
     private var alumniSection: some View {
         VStack(spacing: 16) {
-            comingSoonCard(
-                icon: "person.2.fill",
-                title: "Alumni Directory Coming Soon",
-                message: "We are building out the alumni directory. Please add your contact information below so you can be included when we launch this feature."
+            // Search bar
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.navy.opacity(0.4))
+                TextField("Search by name, email, or location", text: $alumniSearchText)
+                    .font(.subheadline)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                if !alumniSearchText.isEmpty {
+                    Button(action: { alumniSearchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.navy.opacity(0.4))
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color.white)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.gold.opacity(0.3), lineWidth: 1)
             )
+
+            if filteredAlumni.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: alumniSearchText.isEmpty ? "person.2.fill" : "magnifyingglass")
+                        .font(.system(size: 36))
+                        .foregroundColor(.navy.opacity(0.3))
+                    Text(alumniSearchText.isEmpty ? "No alumni listed yet" : "No results found")
+                        .font(.headline)
+                        .foregroundColor(.navy)
+                    Text(alumniSearchText.isEmpty
+                         ? "Be the first! Add your contact info below."
+                         : "Try a different search term.")
+                        .font(.subheadline)
+                        .foregroundColor(.navy.opacity(0.6))
+                        .multilineTextAlignment(.center)
+                }
+                .padding(32)
+                .frame(maxWidth: .infinity)
+                .background(Color.white)
+                .cornerRadius(16)
+                .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+            } else {
+                // Results count
+                Text("\(filteredAlumni.count) alumni")
+                    .font(.caption)
+                    .foregroundColor(.navy.opacity(0.5))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(filteredAlumni) { alumnus in
+                    AlumniContactCard(
+                        alumnus: alumnus,
+                        isExpanded: expandedAlumniId == alumnus.id,
+                        onTap: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                if expandedAlumniId == alumnus.id {
+                                    expandedAlumniId = nil
+                                } else {
+                                    expandedAlumniId = alumnus.id
+                                }
+                            }
+                        }
+                    )
+                }
+            }
         }
     }
     
@@ -158,7 +235,10 @@ struct ContactsView: View {
     private func loadData() async {
         isLoading = true
         do {
-            rebbeim = try await FirebaseService.shared.fetchRebbeim()
+            async let rebbeimResult = FirebaseService.shared.fetchRebbeim()
+            async let alumniResult = FirebaseService.shared.fetchApprovedAlumni()
+            rebbeim = try await rebbeimResult
+            alumni = try await alumniResult
         } catch {
             print("Error loading contacts: \(error)")
         }
@@ -251,6 +331,130 @@ struct RebbeCard: View {
         }
     }
     
+    private func openPhone(_ phone: String) {
+        let cleaned = phone.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+        if let url = URL(string: "tel:\(cleaned)") {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
+// MARK: - Alumni Contact Card
+struct AlumniContactCard: View {
+    let alumnus: AlumniContact
+    let isExpanded: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Collapsed header — always visible
+            Button(action: onTap) {
+                HStack(spacing: 14) {
+                    // Initials circle
+                    ZStack {
+                        Circle()
+                            .fill(Color.navy.opacity(0.1))
+                        Text(initials)
+                            .font(.headline)
+                            .foregroundColor(.navy)
+                    }
+                    .frame(width: 44, height: 44)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(alumnus.name)
+                            .font(.headline)
+                            .foregroundColor(.navy)
+
+                        Text(alumnus.location)
+                            .font(.caption)
+                            .foregroundColor(.navy.opacity(0.6))
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.navy.opacity(0.4))
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+                .padding(16)
+            }
+            .buttonStyle(.plain)
+
+            // Expanded details
+            if isExpanded {
+                Divider()
+                    .padding(.horizontal, 16)
+
+                VStack(spacing: 12) {
+                    if let email = alumnus.email, !email.isEmpty {
+                        Button(action: { openEmail(email) }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "envelope.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gold)
+                                    .frame(width: 24)
+                                Text(email)
+                                    .font(.subheadline)
+                                    .foregroundColor(.navy)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if let phone = alumnus.phone, !phone.isEmpty {
+                        Button(action: { openPhone(phone) }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "phone.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gold)
+                                    .frame(width: 24)
+                                Text(phone)
+                                    .font(.subheadline)
+                                    .foregroundColor(.navy)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    HStack(spacing: 10) {
+                        Image(systemName: "mappin.and.ellipse")
+                            .font(.subheadline)
+                            .foregroundColor(.gold)
+                            .frame(width: 24)
+                        Text(alumnus.location)
+                            .font(.subheadline)
+                            .foregroundColor(.navy)
+                        Spacer()
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+    }
+
+    private var initials: String {
+        let parts = alumnus.name.split(separator: " ")
+        if parts.count >= 2 {
+            return String(parts[0].prefix(1) + parts[1].prefix(1)).uppercased()
+        }
+        return String(alumnus.name.prefix(2)).uppercased()
+    }
+
+    private func openEmail(_ email: String) {
+        if let url = URL(string: "mailto:\(email)") {
+            UIApplication.shared.open(url)
+        }
+    }
+
     private func openPhone(_ phone: String) {
         let cleaned = phone.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
         if let url = URL(string: "tel:\(cleaned)") {

@@ -86,6 +86,17 @@ class FirebaseService: ObservableObject {
         return photos.sorted { $0.order < $1.order }
     }
     
+    // MARK: - Alumni Contacts
+    func fetchApprovedAlumni() async throws -> [AlumniContact] {
+        let snapshot = try await db.collection("alumniContactSubmissions")
+            .getDocuments()
+
+        return snapshot.documents
+            .filter { ($0.data()["status"] as? String) == "approved" }
+            .compactMap { AlumniContact(document: $0) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     // MARK: - Rebbeim
     func fetchRebbeim() async throws -> [Rebbe] {
         let snapshot = try await db.collection("rebbeim")
