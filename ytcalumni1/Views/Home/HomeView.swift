@@ -633,7 +633,7 @@ struct AlumniPhotoCard: View {
                         .overlay(ProgressView())
                 }
             }
-            .frame(height: 110)
+            .frame(height: 90)
             .clipped()
             
             // Info - only show if there's actual data
