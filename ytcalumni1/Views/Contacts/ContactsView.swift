@@ -155,12 +155,6 @@ struct ContactsView: View {
                 .cornerRadius(16)
                 .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
             } else {
-                // Results count
-                Text("\(filteredAlumni.count) alumni")
-                    .font(.caption)
-                    .foregroundColor(.navy.opacity(0.5))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
                 ForEach(filteredAlumni) { alumnus in
                     AlumniContactCard(
                         alumnus: alumnus,
