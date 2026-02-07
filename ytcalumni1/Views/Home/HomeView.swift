@@ -82,6 +82,7 @@ struct HomeView: View {
             }
         }
         .background(Color.cream.ignoresSafeArea())
+        .ignoresSafeArea(.container, edges: .top)
         .navigationBarHidden(true)
         .task {
             await loadData()
