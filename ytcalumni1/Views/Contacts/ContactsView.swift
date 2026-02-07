@@ -10,6 +10,7 @@ struct ContactsView: View {
     @State private var expandedAlumniId: String?
     @State private var isLoading = true
     @State private var selectedTab: ContactTab = .rebbeim
+    @State private var showEditSheet = false
     
     enum ContactTab: String, CaseIterable {
         case rebbeim = "Rebbeim"
@@ -17,57 +18,60 @@ struct ContactsView: View {
     }
     
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                // Header
-                VStack(spacing: 8) {
-                    Text("Directory")
-                        .font(.serifHeadline())
-                        .foregroundColor(.cream)
-                    
-                    Text("Connect with Rebbeim and fellow alumni")
-                        .font(.subheadline)
-                        .foregroundColor(.cream.opacity(0.7))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
-                .background(Color.navy)
-                
-                VStack(spacing: 24) {
-                    // Tab Selector
-                    HStack(spacing: 0) {
-                        ForEach(ContactTab.allCases, id: \.self) { tab in
-                            Button(action: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    selectedTab = tab
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Header
+                    VStack(spacing: 8) {
+                        Text("Directory")
+                            .font(.serifHeadline())
+                            .foregroundColor(.cream)
+
+                        Text("Connect with Rebbeim and fellow alumni")
+                            .font(.subheadline)
+                            .foregroundColor(.cream.opacity(0.7))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 32)
+                    .background(Color.navy)
+
+                    VStack(spacing: 24) {
+                        // Tab Selector
+                        HStack(spacing: 0) {
+                            ForEach(ContactTab.allCases, id: \.self) { tab in
+                                Button(action: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        selectedTab = tab
+                                    }
+                                }) {
+                                    Text(tab.rawValue)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundColor(selectedTab == tab ? .cream : .navy.opacity(0.6))
+                                        .padding(.vertical, 10)
+                                        .padding(.horizontal, 20)
+                                        .background(selectedTab == tab ? Color.navy : Color.clear)
+                                        .cornerRadius(8)
                                 }
-                            }) {
-                                Text(tab.rawValue)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundColor(selectedTab == tab ? .cream : .navy.opacity(0.6))
-                                    .padding(.vertical, 10)
-                                    .padding(.horizontal, 20)
-                                    .background(selectedTab == tab ? Color.navy : Color.clear)
-                                    .cornerRadius(8)
                             }
                         }
+                        .padding(4)
+                        .background(Color.white)
+                        .cornerRadius(12)
+                        .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
+
+                        // Content based on tab
+                        if selectedTab == .rebbeim {
+                            rebbeimSection
+                        } else {
+                            alumniSection(scrollProxy: scrollProxy)
+                        }
+
+                        // Contact Form
+                        contactFormSection
+                            .id("contactForm")
                     }
-                    .padding(4)
-                    .background(Color.white)
-                    .cornerRadius(12)
-                    .shadow(color: Color.black.opacity(0.06), radius: 4, x: 0, y: 2)
-                    
-                    // Content based on tab
-                    if selectedTab == .rebbeim {
-                        rebbeimSection
-                    } else {
-                        alumniSection
-                    }
-                    
-                    // Contact Form
-                    contactFormSection
+                    .padding(16)
                 }
-                .padding(16)
             }
         }
         .background(Color.cream.ignoresSafeArea())
@@ -75,6 +79,13 @@ struct ContactsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadData()
+        }
+        .sheet(isPresented: $showEditSheet) {
+            if let record = currentUserAlumniRecord {
+                EditContactInfoSheet(alumnus: record) {
+                    Task { await loadData() }
+                }
+            }
         }
     }
     
@@ -97,6 +108,11 @@ struct ContactsView: View {
     
     // MARK: - Alumni Section
 
+    private var currentUserAlumniRecord: AlumniContact? {
+        guard let email = authManager.user?.email?.lowercased() else { return nil }
+        return alumni.first { $0.email?.lowercased() == email }
+    }
+
     private var filteredAlumni: [AlumniContact] {
         if alumniSearchText.isEmpty {
             return alumni
@@ -109,7 +125,7 @@ struct ContactsView: View {
         }
     }
 
-    private var alumniSection: some View {
+    private func alumniSection(scrollProxy: ScrollViewProxy) -> some View {
         VStack(spacing: 16) {
             // Search bar
             HStack(spacing: 10) {
@@ -134,6 +150,33 @@ struct ContactsView: View {
                     .stroke(Color.gold.opacity(0.3), lineWidth: 1)
             )
 
+            // Edit or Add your info button
+            if currentUserAlumniRecord != nil {
+                Button(action: { showEditSheet = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "pencil.circle.fill")
+                        Text("Edit Your Info")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.gold)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            } else {
+                Button(action: {
+                    withAnimation {
+                        scrollProxy.scrollTo("contactForm", anchor: .top)
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                        Text("Add Your Info")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.gold)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+
             if filteredAlumni.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: alumniSearchText.isEmpty ? "person.2.fill" : "magnifyingglass")
@@ -155,12 +198,6 @@ struct ContactsView: View {
                 .cornerRadius(16)
                 .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
             } else {
-                // Results count
-                Text("\(filteredAlumni.count) alumni")
-                    .font(.caption)
-                    .foregroundColor(.navy.opacity(0.5))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
                 ForEach(filteredAlumni) { alumnus in
                     AlumniContactCard(
                         alumnus: alumnus,
@@ -633,6 +670,152 @@ struct ContactInfoForm: View {
         phone = ""
         locationType = nil
         otherLocation = ""
+    }
+}
+
+// MARK: - Edit Contact Info Sheet
+struct EditContactInfoSheet: View {
+    let alumnus: AlumniContact
+    let onSave: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    @State private var name: String
+    @State private var phone: String
+    @State private var location: String
+    @State private var isSaving = false
+    @State private var showSuccess = false
+    @State private var errorMessage: String?
+
+    init(alumnus: AlumniContact, onSave: @escaping () -> Void) {
+        self.alumnus = alumnus
+        self.onSave = onSave
+        _name = State(initialValue: alumnus.name)
+        _phone = State(initialValue: alumnus.phone ?? "")
+        _location = State(initialValue: alumnus.location)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Name
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Full Name")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.navy)
+                        TextField("Enter your full name", text: $name)
+                            .customTextField()
+                    }
+
+                    // Email (read-only)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Email")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.navy)
+                            Text("(cannot be changed)")
+                                .font(.caption)
+                                .foregroundColor(.navy.opacity(0.5))
+                        }
+                        Text(alumnus.email ?? "")
+                            .font(.subheadline)
+                            .foregroundColor(.navy.opacity(0.6))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .background(Color.cream)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.gold.opacity(0.15), lineWidth: 1)
+                            )
+                    }
+
+                    // Phone
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Phone Number")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.navy)
+                        TextField("(555) 123-4567", text: $phone)
+                            .keyboardType(.phonePad)
+                            .customTextField()
+                    }
+
+                    // Location
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Location")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.navy)
+                        TextField("Enter your location", text: $location)
+                            .customTextField()
+                    }
+
+                    // Save Button
+                    Button(action: save) {
+                        HStack {
+                            if isSaving {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .cream))
+                                    .scaleEffect(0.8)
+                            }
+                            Text(isSaving ? "Saving..." : "Save Changes")
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle(isDisabled: isSaving || name.isEmpty || location.isEmpty))
+                    .disabled(isSaving || name.isEmpty || location.isEmpty)
+                }
+                .padding(20)
+            }
+            .background(Color.cream)
+            .navigationTitle("Edit Your Info")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundColor(.navy)
+                }
+            }
+            .alert("Info Updated", isPresented: $showSuccess) {
+                Button("OK", role: .cancel) {
+                    onSave()
+                    dismiss()
+                }
+            } message: {
+                Text("Your contact information has been updated.")
+            }
+            .alert("Error", isPresented: .init(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "An error occurred")
+            }
+        }
+    }
+
+    private func save() {
+        guard let docId = alumnus.id else { return }
+        isSaving = true
+
+        Task {
+            do {
+                try await FirebaseService.shared.updateContactInfo(
+                    documentId: docId,
+                    name: name,
+                    phone: phone.isEmpty ? nil : phone,
+                    location: location
+                )
+                await MainActor.run {
+                    isSaving = false
+                    showSuccess = true
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    isSaving = false
+                }
+            }
+        }
     }
 }
 
