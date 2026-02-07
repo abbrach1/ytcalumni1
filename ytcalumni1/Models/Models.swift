@@ -207,6 +207,27 @@ struct AlumniPhoto: Identifiable, Hashable {
     }
 }
 
+// MARK: - Alumni Contact Model
+struct AlumniContact: Identifiable, Hashable {
+    var id: String?
+    let name: String
+    let email: String?
+    let phone: String?
+    let location: String
+    let submittedAt: String?
+
+    init?(document: DocumentSnapshot) {
+        guard let data = document.data() else { return nil }
+
+        self.id = document.documentID
+        self.name = data["name"] as? String ?? ""
+        self.email = data["email"] as? String
+        self.phone = data["phone"] as? String
+        self.location = data["location"] as? String ?? ""
+        self.submittedAt = data["submittedAt"] as? String
+    }
+}
+
 // MARK: - Rebbe Model
 struct Rebbe: Identifiable, Hashable {
     var id: String?
