@@ -152,7 +152,22 @@ class FirebaseService: ObservableObject {
         
         try await db.collection("alumniContactSubmissions").addDocument(data: data)
     }
-    
+
+    func updateContactInfo(
+        documentId: String,
+        name: String,
+        phone: String?,
+        location: String
+    ) async throws {
+        let data: [String: Any] = [
+            "name": name,
+            "phone": phone as Any,
+            "location": location
+        ]
+
+        try await db.collection("alumniContactSubmissions").document(documentId).updateData(data)
+    }
+
     func submitSimcha(
         fullName: String,
         simchaType: String,

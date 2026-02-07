@@ -10,6 +10,7 @@ struct ContactsView: View {
     @State private var expandedAlumniId: String?
     @State private var isLoading = true
     @State private var selectedTab: ContactTab = .rebbeim
+    @State private var showEditSheet = false
     
     enum ContactTab: String, CaseIterable {
         case rebbeim = "Rebbeim"
@@ -76,6 +77,13 @@ struct ContactsView: View {
         .task {
             await loadData()
         }
+        .sheet(isPresented: $showEditSheet) {
+            if let record = currentUserAlumniRecord {
+                EditContactInfoSheet(alumnus: record) {
+                    Task { await loadData() }
+                }
+            }
+        }
     }
     
     // MARK: - Rebbeim Section
@@ -96,6 +104,11 @@ struct ContactsView: View {
     }
     
     // MARK: - Alumni Section
+
+    private var currentUserAlumniRecord: AlumniContact? {
+        guard let email = authManager.user?.email?.lowercased() else { return nil }
+        return alumni.first { $0.email?.lowercased() == email }
+    }
 
     private var filteredAlumni: [AlumniContact] {
         if alumniSearchText.isEmpty {
@@ -133,6 +146,19 @@ struct ContactsView: View {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.gold.opacity(0.3), lineWidth: 1)
             )
+
+            // Edit your info button (only if user has a record)
+            if currentUserAlumniRecord != nil {
+                Button(action: { showEditSheet = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "pencil.circle.fill")
+                        Text("Edit Your Info")
+                            .font(.subheadline.weight(.medium))
+                    }
+                    .foregroundColor(.gold)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
 
             if filteredAlumni.isEmpty {
                 VStack(spacing: 12) {
@@ -627,6 +653,152 @@ struct ContactInfoForm: View {
         phone = ""
         locationType = nil
         otherLocation = ""
+    }
+}
+
+// MARK: - Edit Contact Info Sheet
+struct EditContactInfoSheet: View {
+    let alumnus: AlumniContact
+    let onSave: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    @State private var name: String
+    @State private var phone: String
+    @State private var location: String
+    @State private var isSaving = false
+    @State private var showSuccess = false
+    @State private var errorMessage: String?
+
+    init(alumnus: AlumniContact, onSave: @escaping () -> Void) {
+        self.alumnus = alumnus
+        self.onSave = onSave
+        _name = State(initialValue: alumnus.name)
+        _phone = State(initialValue: alumnus.phone ?? "")
+        _location = State(initialValue: alumnus.location)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Name
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Full Name")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.navy)
+                        TextField("Enter your full name", text: $name)
+                            .customTextField()
+                    }
+
+                    // Email (read-only)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Email")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.navy)
+                            Text("(cannot be changed)")
+                                .font(.caption)
+                                .foregroundColor(.navy.opacity(0.5))
+                        }
+                        Text(alumnus.email ?? "")
+                            .font(.subheadline)
+                            .foregroundColor(.navy.opacity(0.6))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .background(Color.cream)
+                            .cornerRadius(10)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.gold.opacity(0.15), lineWidth: 1)
+                            )
+                    }
+
+                    // Phone
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Phone Number")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.navy)
+                        TextField("(555) 123-4567", text: $phone)
+                            .keyboardType(.phonePad)
+                            .customTextField()
+                    }
+
+                    // Location
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Location")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.navy)
+                        TextField("Enter your location", text: $location)
+                            .customTextField()
+                    }
+
+                    // Save Button
+                    Button(action: save) {
+                        HStack {
+                            if isSaving {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .cream))
+                                    .scaleEffect(0.8)
+                            }
+                            Text(isSaving ? "Saving..." : "Save Changes")
+                        }
+                    }
+                    .buttonStyle(PrimaryButtonStyle(isDisabled: isSaving || name.isEmpty || location.isEmpty))
+                    .disabled(isSaving || name.isEmpty || location.isEmpty)
+                }
+                .padding(20)
+            }
+            .background(Color.cream)
+            .navigationTitle("Edit Your Info")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                        .foregroundColor(.navy)
+                }
+            }
+            .alert("Info Updated", isPresented: $showSuccess) {
+                Button("OK", role: .cancel) {
+                    onSave()
+                    dismiss()
+                }
+            } message: {
+                Text("Your contact information has been updated.")
+            }
+            .alert("Error", isPresented: .init(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "An error occurred")
+            }
+        }
+    }
+
+    private func save() {
+        guard let docId = alumnus.id else { return }
+        isSaving = true
+
+        Task {
+            do {
+                try await FirebaseService.shared.updateContactInfo(
+                    documentId: docId,
+                    name: name,
+                    phone: phone.isEmpty ? nil : phone,
+                    location: location
+                )
+                await MainActor.run {
+                    isSaving = false
+                    showSuccess = true
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    isSaving = false
+                }
+            }
+        }
     }
 }
 
