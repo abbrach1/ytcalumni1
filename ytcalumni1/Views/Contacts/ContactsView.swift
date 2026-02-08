@@ -92,17 +92,11 @@ struct ContactsView: View {
     // MARK: - Rebbeim Section
     private var rebbeimSection: some View {
         VStack(spacing: 16) {
-            if rebbeim.isEmpty {
-                comingSoonCard(
-                    icon: "book.fill",
-                    title: "Rebbeim Directory Coming Soon",
-                    message: "We are working on building the Rebbeim directory. Check back soon for contact information for all the Rebbeim."
-                )
-            } else {
-                ForEach(rebbeim) { rebbe in
-                    RebbeCard(rebbe: rebbe)
-                }
-            }
+            comingSoonCard(
+                icon: "book.fill",
+                title: "Rebbeim Directory Coming Soon",
+                message: "We are working on building the Rebbeim directory. Check back soon for contact information for all the Rebbeim."
+            )
         }
     }
     
