@@ -1,11 +1,10 @@
 import SwiftUI
-import FirebaseFirestore
 
 struct NotificationPreferencesView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
 
-    @State private var rebbeim: [Rebbe] = []
+    @State private var rebbeNames: [String] = []
     @State private var isLoading = true
 
     // Global toggles
@@ -69,12 +68,12 @@ struct NotificationPreferencesView: View {
                         ProgressView()
                         Spacer()
                     }
-                } else if rebbeim.isEmpty {
+                } else if rebbeNames.isEmpty {
                     Text("No Rebbeim available yet.")
                         .foregroundColor(.navy.opacity(0.5))
                 } else {
-                    ForEach(rebbeim) { rebbe in
-                        let topicKey = sanitizeTopicName(rebbe.name)
+                    ForEach(rebbeNames, id: \.self) { name in
+                        let topicKey = sanitizeTopicName(name)
                         Toggle(isOn: Binding(
                             get: { rebbeToggles[topicKey] ?? false },
                             set: { newValue in
@@ -82,13 +81,8 @@ struct NotificationPreferencesView: View {
                                 toggleTopic("rebbe_\(topicKey)", enabled: newValue)
                             }
                         )) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(rebbe.name)
-                                    .foregroundColor(.navy)
-                                Text(rebbe.title)
-                                    .font(.caption)
-                                    .foregroundColor(.navy.opacity(0.6))
-                            }
+                            Text(name)
+                                .foregroundColor(.navy)
                         }
                         .tint(.gold)
                     }
@@ -120,11 +114,13 @@ struct NotificationPreferencesView: View {
     private func loadData() async {
         isLoading = true
 
-        // Load rebbeim
+        // Extract unique rebbe names from shiurim
         do {
-            rebbeim = try await FirebaseService.shared.fetchRebbeim()
+            let shiurim = try await FirebaseService.shared.fetchShiurim()
+            let unique = Set(shiurim.map { $0.rebbe }).filter { !$0.isEmpty }
+            rebbeNames = unique.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         } catch {
-            print("Error loading rebbeim: \(error)")
+            print("Error loading shiurim: \(error)")
         }
 
         // Load saved preferences from UserDefaults
@@ -132,8 +128,8 @@ struct NotificationPreferencesView: View {
         simchasEnabled = UserDefaults.standard.object(forKey: "notif_simchas") as? Bool ?? true
         announcementsEnabled = UserDefaults.standard.object(forKey: "notif_announcements") as? Bool ?? true
 
-        for rebbe in rebbeim {
-            let key = sanitizeTopicName(rebbe.name)
+        for name in rebbeNames {
+            let key = sanitizeTopicName(name)
             rebbeToggles[key] = UserDefaults.standard.object(forKey: "notif_rebbe_\(key)") as? Bool ?? false
         }
 
