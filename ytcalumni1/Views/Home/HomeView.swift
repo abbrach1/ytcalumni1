@@ -18,6 +18,7 @@ struct HomeView: View {
     @State private var currentCarouselIndex = 0
     @State private var selectedPhoto: AlumniPhoto?
     @State private var showAnnouncementsExpanded = false
+    @State private var showNotificationSettings = false
     @State private var playbackPositions: [String: Double] = [:]
     
     private let timer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
@@ -90,6 +91,11 @@ struct HomeView: View {
         .sheet(item: $selectedPhoto) { photo in
             AlumniPhotoDetailView(photo: photo)
         }
+        .sheet(isPresented: $showNotificationSettings) {
+            NavigationStack {
+                NotificationPreferencesView()
+            }
+        }
     }
     
     // MARK: - Content Section (keeping for reference but not using)
@@ -145,6 +151,9 @@ struct HomeView: View {
                 HStack {
                     Spacer()
                     Menu {
+                        Button(action: { showNotificationSettings = true }) {
+                            Label("Notification Settings", systemImage: "bell.fill")
+                        }
                         if authManager.isAdmin {
                             Button(action: {}) {
                                 Label("Admin Dashboard", systemImage: "gearshape.fill")
