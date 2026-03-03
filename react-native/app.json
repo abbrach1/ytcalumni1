@@ -2,6 +2,7 @@
   "expo": {
     "name": "YTC Alumni",
     "slug": "ytc-alumni-zsa-mlk94u5nwt2dqnelq",
+    "owner": "abbrachfelds-organization",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
