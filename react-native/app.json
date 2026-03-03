@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "YTC Alumni",
+    "slug": "ytc-alumni",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "ytcalumni",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a2640"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "toraschaim.ytcalumni1",
+      "infoPlist": {
+        "UIBackgroundModes": ["audio"]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1a2640"
+      },
+      "package": "com.toraschaim.ytcalumni"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#1a2640"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "db1d4b14-f4b5-45ba-acee-986b28588545"
+      }
+    }
+  }
+}
