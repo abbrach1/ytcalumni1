@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "YTC Alumni",
-    "slug": "ytc-alumni",
+    "slug": "ytc-alumni-zsa-mlk94u5nwt2dqnelq",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -39,7 +39,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "db1d4b14-f4b5-45ba-acee-986b28588545"
+        "projectId": "ce1df087-4092-46a0-ab54-008f8a9bfcb2"
       }
     }
   }
