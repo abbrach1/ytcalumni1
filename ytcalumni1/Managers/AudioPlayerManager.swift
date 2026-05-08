@@ -20,7 +20,12 @@ class AudioPlayerManager: ObservableObject {
     private var playerItemObserver: AnyCancellable?
     private var timeObserver: Any?
     private var playedShiurimIds: Set<String> = []
-    
+
+    // Firestore write throttling for playback position sync
+    private var lastFirestoreSync: Date?
+    private var positionsDocExists: Bool?
+    private let firestoreSyncInterval: TimeInterval = 10
+
     let speedOptions: [Float] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     
     init() {
@@ -146,6 +151,7 @@ class AudioPlayerManager: ObservableObject {
         player?.pause()
         isPlaying = false
         updateNowPlayingInfo()
+        savePlaybackPosition(forceRemote: true)
     }
     
     func togglePlayPause() {
@@ -157,6 +163,9 @@ class AudioPlayerManager: ObservableObject {
     }
     
     func stop() {
+        // Flush final position before tearing down so currentShiur/currentTime are still valid
+        savePlaybackPosition(forceRemote: true)
+
         player?.pause()
         if let timeObserver = timeObserver {
             player?.removeTimeObserver(timeObserver)
@@ -168,6 +177,7 @@ class AudioPlayerManager: ObservableObject {
         isPlaying = false
         currentTime = 0
         duration = 0
+        lastFirestoreSync = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     
@@ -202,52 +212,58 @@ class AudioPlayerManager: ObservableObject {
     // Website structure: /users/{uid}/preferences/playbackPositions
     // { positions: { "shiur_001": 245, "shiur_042": 1820 }, lastUpdated, syncedAt }
     
-    private func savePlaybackPosition() {
+    private func savePlaybackPosition(forceRemote: Bool = false) {
         guard let shiur = currentShiur, let id = shiur.id else { return }
-        
-        // Save locally for immediate access
+
+        // Local save runs every tick — cheap and supports offline resume
         UserDefaults.standard.set(currentTime, forKey: "playback_position_\(id)")
-        
-        // Save to Firebase for cross-device sync (matches website structure)
+
+        // Throttle Firestore writes; the 0.5s time observer calls this every tick
+        if !forceRemote, let last = lastFirestoreSync,
+           Date().timeIntervalSince(last) < firestoreSyncInterval {
+            return
+        }
+        flushPlaybackPositionToFirebase(shiurId: id, position: currentTime)
+    }
+
+    private func flushPlaybackPositionToFirebase(shiurId: String, position: TimeInterval) {
         guard let userId = Auth.auth().currentUser?.uid else { return }
-        
+        lastFirestoreSync = Date()
+
         let docRef = Firestore.firestore()
             .collection("users")
             .document(userId)
             .collection("preferences")
             .document("playbackPositions")
-        
-        // First check if document exists, then update or create
-        docRef.getDocument { [weak self] snapshot, error in
+
+        let now = Date().timeIntervalSince1970 * 1000 // milliseconds, matches website
+
+        // Once we know the doc exists we skip the getDocument round-trip
+        if positionsDocExists == true {
+            docRef.updateData([
+                "positions.\(shiurId)": position,
+                "lastUpdated": now,
+                "syncedAt": now
+            ])
+            return
+        }
+
+        docRef.getDocument { [weak self] snapshot, _ in
             guard let self = self else { return }
-            
-            let now = Date().timeIntervalSince1970 * 1000 // milliseconds like website
-            
             if let snapshot = snapshot, snapshot.exists {
-                // Document exists - use updateData with dot notation for nested field
+                self.positionsDocExists = true
                 docRef.updateData([
-                    "positions.\(id)": self.currentTime,
+                    "positions.\(shiurId)": position,
                     "lastUpdated": now,
                     "syncedAt": now
-                ]) { error in
-                    if let error = error {
-                        print("❌ Error updating playback position: \(error)")
-                    } else {
-                        print("✅ Updated playback position for \(id): \(self.currentTime)s")
-                    }
-                }
+                ])
             } else {
-                // Document doesn't exist - create it with setData
                 docRef.setData([
-                    "positions": [id: self.currentTime],
+                    "positions": [shiurId: position],
                     "lastUpdated": now,
                     "syncedAt": now
                 ]) { error in
-                    if let error = error {
-                        print("❌ Error creating playback positions doc: \(error)")
-                    } else {
-                        print("✅ Created playback positions doc with \(id): \(self.currentTime)s")
-                    }
+                    if error == nil { self.positionsDocExists = true }
                 }
             }
         }
