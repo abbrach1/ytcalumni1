@@ -1,7 +1,5 @@
 import Foundation
 import FirebaseFirestore
-import FirebaseAuth
-import UIKit
 import Combine
 
 class FirebaseService: ObservableObject {
@@ -25,18 +23,6 @@ class FirebaseService: ObservableObject {
             .getDocuments()
         
         return snapshot.documents.first.flatMap { Shiur(document: $0) }
-    }
-    
-    func incrementPlayCount(shiurId: String) async throws {
-        try await db.collection("shiurim").document(shiurId).updateData([
-            "playCount": FieldValue.increment(Int64(1))
-        ])
-    }
-    
-    func incrementDownloadCount(shiurId: String) async throws {
-        try await db.collection("shiurim").document(shiurId).updateData([
-            "downloadCount": FieldValue.increment(Int64(1))
-        ])
     }
     
     // MARK: - Events
@@ -197,36 +183,6 @@ class FirebaseService: ObservableObject {
         try await db.collection("simchaSubmissions").addDocument(data: data)
     }
     
-    // MARK: - Usage Tracking
-    /// Records that the signed-in user opened the iOS app. Stamps the user doc
-    /// with their last-active time + platform, and adds them to the daily
-    /// active-users set for today. No-op when not signed in.
-    func recordAppOpen() {
-        guard let userId = Auth.auth().currentUser?.uid else { return }
-
-        let info = Bundle.main.infoDictionary
-        let appVersion = info?["CFBundleShortVersionString"] as? String ?? "unknown"
-        let buildNumber = info?["CFBundleVersion"] as? String ?? "unknown"
-        let now = FieldValue.serverTimestamp()
-
-        db.collection("users").document(userId).setData([
-            "lastActiveAt": now,
-            "lastPlatform": "ios",
-            "iosLastActiveAt": now,
-            "iosAppVersion": appVersion,
-            "iosBuildNumber": buildNumber,
-            "iosDeviceModel": UIDevice.current.model,
-            "iosSystemVersion": UIDevice.current.systemVersion
-        ], merge: true)
-
-        let today = formatDateString(Date())
-        db.collection("userActivity").document(today).setData([
-            "date": today,
-            "lastUpdated": now,
-            "iosUsers": FieldValue.arrayUnion([userId])
-        ], merge: true)
-    }
-
     // MARK: - Helper
     private func formatDateString(_ date: Date) -> String {
         let formatter = DateFormatter()

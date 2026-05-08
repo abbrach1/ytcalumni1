@@ -31,7 +31,9 @@ class AuthManager: ObservableObject {
                 self?.user = user
                 if let user = user, let email = user.email {
                     await self?.checkUserApproval(email: email)
-                    FirebaseService.shared.recordAppOpen()
+                    // Logs an "/" pageview to the website's tracking API so
+                    // this user shows up in the admin Analytics tab as iOS.
+                    Task { await AnalyticsService.shared.trackPageView(path: "/") }
                 } else {
                     self?.isApproved = false
                     self?.isAdmin = false

@@ -102,8 +102,9 @@ struct YTCAlumniApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                     // Clear badge when app opens
                     NotificationManager.shared.clearBadge()
-                    // Re-stamp daily-active record when returning from background
-                    FirebaseService.shared.recordAppOpen()
+                    // Re-log pageview so this counts toward today's active users
+                    // in the website's admin Analytics tab.
+                    Task { await AnalyticsService.shared.trackPageView(path: "/") }
                 }
         }
     }

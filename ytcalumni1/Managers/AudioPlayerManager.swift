@@ -105,11 +105,12 @@ class AudioPlayerManager: ObservableObject {
                     self?.isPlaying = true
                     self?.updateNowPlayingInfo()
                     
-                    // Track play count
+                    // Track play (server increments shiurim/{id}.playCount and
+                    // logs to shiurPlays so this shows up in admin Analytics)
                     if let id = shiur.id, !(self?.playedShiurimIds.contains(id) ?? true) {
                         self?.playedShiurimIds.insert(id)
                         Task {
-                            try? await FirebaseService.shared.incrementPlayCount(shiurId: id)
+                            await AnalyticsService.shared.trackPlay(shiurId: id)
                         }
                     }
                 } else if status == .failed {
