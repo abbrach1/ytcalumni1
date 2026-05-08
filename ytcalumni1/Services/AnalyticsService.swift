@@ -14,7 +14,9 @@ final class AnalyticsService {
     static let shared = AnalyticsService()
 
     private let baseURL = "https://alumni.ytchaim.com"
-    private let platform = "ios" // server's sanitizePlatform allow-list
+    // "ios-app" distinguishes the native iOS app from mobile Safari ("ios-web")
+    // in the admin platform breakdown. See lib/platform.ts in the website repo.
+    private let platform = "ios-app"
 
     private lazy var userAgent: String = {
         let info = Bundle.main.infoDictionary
