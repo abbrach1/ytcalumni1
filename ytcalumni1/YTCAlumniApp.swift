@@ -102,6 +102,8 @@ struct YTCAlumniApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                     // Clear badge when app opens
                     NotificationManager.shared.clearBadge()
+                    // Re-stamp daily-active record when returning from background
+                    FirebaseService.shared.recordAppOpen()
                 }
         }
     }

@@ -31,6 +31,7 @@ class AuthManager: ObservableObject {
                 self?.user = user
                 if let user = user, let email = user.email {
                     await self?.checkUserApproval(email: email)
+                    FirebaseService.shared.recordAppOpen()
                 } else {
                     self?.isApproved = false
                     self?.isAdmin = false
