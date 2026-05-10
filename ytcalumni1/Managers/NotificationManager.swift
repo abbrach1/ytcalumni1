@@ -108,9 +108,10 @@ class NotificationManager: NSObject, ObservableObject {
     //
     // The website writes the user's preferences to `subscriptions/{uid}` (the
     // same doc NotificationSettingsView writes). When push mirroring is on
-    // (default), we keep this device subscribed to a `rebbe_<sanitized>` FCM
-    // topic for each selected rebbe — so the website's existing
-    // /api/send-notification fan-out delivers an alert here too.
+    // (default), we keep this device subscribed to `rebbe_<sanitized>` and
+    // `tag_<sanitized>` FCM topics that match the user's picks — so the
+    // website's existing /api/send-notification fan-out delivers an alert
+    // here too.
     //
     // We diff against the last synced set in UserDefaults so a toggle-off
     // cleanly unsubscribes only the topics this flow added.
@@ -132,7 +133,8 @@ class NotificationManager: NSObject, ObservableObject {
     }
 
     /// Reads `subscriptions/{uid}` and (if mirroring is enabled) syncs FCM
-    /// rebbe_* topics to match. Safe to call on every launch + foreground.
+    /// rebbe_* and tag_* topics to match. Safe to call on every launch +
+    /// foreground.
     func syncPushTopicsFromSubscription() async {
         guard let userId = Auth.auth().currentUser?.uid else { return }
         guard pushSubscriptionsEnabled else {
@@ -147,9 +149,12 @@ class NotificationManager: NSObject, ObservableObject {
                 .collection("subscriptions")
                 .document(userId)
                 .getDocument()
-            let rebbeim = (doc.data()?["rebbeim"] as? [String]) ?? []
-            let desired = Set(rebbeim.map { "rebbe_\(Self.sanitizeTopicName($0))" })
-            applyPushTopicDiff(desired: desired)
+            let data = doc.data() ?? [:]
+            let rebbeim = (data["rebbeim"] as? [String]) ?? []
+            let tags = (data["tags"] as? [String]) ?? []
+            let rebbeTopics = rebbeim.map { "rebbe_\(Self.sanitizeTopicName($0))" }
+            let tagTopics = tags.map { "tag_\(Self.sanitizeTopicName($0))" }
+            applyPushTopicDiff(desired: Set(rebbeTopics).union(tagTopics))
         } catch {
             print("❌ syncPushTopicsFromSubscription: \(error)")
         }

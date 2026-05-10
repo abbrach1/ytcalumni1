@@ -18,6 +18,8 @@ struct NotificationSettingsView: View {
     @State private var tagsOptions: [String] = []
     @State private var selectedRebbeim: Set<String> = []
     @State private var selectedTags: Set<String> = []
+    @State private var rebbeimExpanded = false
+    @State private var tagsExpanded = false
 
     @State private var pushEnabled: Bool = NotificationManager.shared.pushSubscriptionsEnabled
     @State private var allNewShiurimPush: Bool = UserDefaults.standard.object(forKey: allNewShiurimKey) as? Bool ?? true
@@ -53,14 +55,15 @@ struct NotificationSettingsView: View {
                         title: "Rebbeim",
                         options: rebbeimOptions,
                         selected: $selectedRebbeim,
+                        isExpanded: $rebbeimExpanded,
                         emptyText: "No rebbeim available yet."
                     )
                     section(
                         title: "Topics",
                         options: tagsOptions,
                         selected: $selectedTags,
-                        emptyText: "No topics available yet.",
-                        footer: "Topics are email-only — no per-topic push notifications yet."
+                        isExpanded: $tagsExpanded,
+                        emptyText: "No topics available yet."
                     )
                     summary
                 }
@@ -220,44 +223,61 @@ struct NotificationSettingsView: View {
         title: String,
         options: [String],
         selected: Binding<Set<String>>,
+        isExpanded: Binding<Bool>,
         emptyText: String,
         footer: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("\(title) (\(selected.wrappedValue.count) selected)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.navy)
-                Spacer()
-                if !selected.wrappedValue.isEmpty {
-                    Button("Clear") { selected.wrappedValue.removeAll() }
-                        .font(.caption)
-                        .foregroundColor(.navy.opacity(0.6))
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.wrappedValue.toggle()
                 }
+            } label: {
+                HStack {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.navy.opacity(0.6))
+                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                    Text("\(title) (\(selected.wrappedValue.count) selected)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.navy)
+                    Spacer()
+                    if isExpanded.wrappedValue && !selected.wrappedValue.isEmpty {
+                        Text("Clear")
+                            .font(.caption)
+                            .foregroundColor(.navy.opacity(0.6))
+                            .onTapGesture { selected.wrappedValue.removeAll() }
+                    }
+                }
+                .contentShape(Rectangle())
             }
-            if options.isEmpty {
-                Text(emptyText)
-                    .font(.caption)
-                    .italic()
-                    .foregroundColor(.navy.opacity(0.5))
-            } else {
-                ChipFlow(spacing: 8) {
-                    ForEach(options, id: \.self) { item in
-                        SubscriptionChip(label: item, isOn: selected.wrappedValue.contains(item)) {
-                            if selected.wrappedValue.contains(item) {
-                                selected.wrappedValue.remove(item)
-                            } else {
-                                selected.wrappedValue.insert(item)
+            .buttonStyle(.plain)
+
+            if isExpanded.wrappedValue {
+                if options.isEmpty {
+                    Text(emptyText)
+                        .font(.caption)
+                        .italic()
+                        .foregroundColor(.navy.opacity(0.5))
+                } else {
+                    ChipFlow(spacing: 8) {
+                        ForEach(options, id: \.self) { item in
+                            SubscriptionChip(label: item, isOn: selected.wrappedValue.contains(item)) {
+                                if selected.wrappedValue.contains(item) {
+                                    selected.wrappedValue.remove(item)
+                                } else {
+                                    selected.wrappedValue.insert(item)
+                                }
                             }
                         }
                     }
                 }
-            }
-            if let footer {
-                Text(footer)
-                    .font(.caption2)
-                    .foregroundColor(.navy.opacity(0.5))
-                    .padding(.top, 2)
+                if let footer {
+                    Text(footer)
+                        .font(.caption2)
+                        .foregroundColor(.navy.opacity(0.5))
+                        .padding(.top, 2)
+                }
             }
         }
         .padding(16)
@@ -329,10 +349,10 @@ struct NotificationSettingsView: View {
 
     // MARK: - Push topic sync
 
-    /// Per-rebbe topics this view manages when push is on. No per-tag topics —
-    /// the website's notify pipeline doesn't fan out tag-keyed FCM yet.
     private func desiredPushTopics() -> Set<String> {
-        Set(selectedRebbeim.map { "rebbe_\(NotificationManager.sanitizeTopicName($0))" })
+        let rebbeTopics = selectedRebbeim.map { "rebbe_\(NotificationManager.sanitizeTopicName($0))" }
+        let tagTopics = selectedTags.map { "tag_\(NotificationManager.sanitizeTopicName($0))" }
+        return Set(rebbeTopics).union(tagTopics)
     }
 
     private func handlePushToggleChange(enabled: Bool) async {
