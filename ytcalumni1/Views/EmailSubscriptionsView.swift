@@ -16,12 +16,17 @@ struct EmailSubscriptionsView: View {
     @State private var tagsOptions: [String] = []
     @State private var selectedRebbeim: Set<String> = []
     @State private var selectedTags: Set<String> = []
+    @State private var pushEnabled: Bool = UserDefaults.standard.bool(forKey: pushEnabledKey)
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var statusMessage: String?
     @State private var statusIsError = false
 
+    private static let pushEnabledKey = "subscriptions_push_enabled"
+    private static let pushTopicsKey = "subscriptions_push_topics" // [String] currently subscribed
+
     private let db = Firestore.firestore()
+    private let notifications = NotificationManager.shared
 
     var body: some View {
         ScrollView {
@@ -32,6 +37,7 @@ struct EmailSubscriptionsView: View {
                     HStack { Spacer(); ProgressView().tint(.navy); Spacer() }
                         .padding(.top, 80)
                 } else {
+                    pushToggleRow
                     section(
                         title: "Rebbeim",
                         options: rebbeimOptions,
@@ -94,6 +100,42 @@ struct EmailSubscriptionsView: View {
                     .font(.subheadline)
             }
         }
+        .padding(.horizontal, 16)
+    }
+
+    private var pushToggleRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+                .foregroundColor(.gold)
+                .font(.title3)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Also send iPhone push notifications")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.navy)
+                Text("Get an instant alert on this device when a matching shiur is uploaded.")
+                    .font(.caption)
+                    .foregroundColor(.navy.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $pushEnabled)
+                .labelsHidden()
+                .tint(.gold)
+                .onChange(of: pushEnabled) { _, newValue in
+                    UserDefaults.standard.set(newValue, forKey: Self.pushEnabledKey)
+                    Task { await handlePushToggleChange(enabled: newValue) }
+                }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.gold.opacity(0.2), lineWidth: 1)
+                )
+        )
         .padding(.horizontal, 16)
     }
 
@@ -199,9 +241,10 @@ struct EmailSubscriptionsView: View {
                     "tags": Array(selectedTags).sorted(),
                     "updatedAt": ISO8601DateFormatter().string(from: Date())
                 ])
-                statusMessage = (selectedRebbeim.isEmpty && selectedTags.isEmpty)
-                    ? "Saved — you won't receive any new shiur emails."
-                    : "Saved — you'll be emailed when matching shiurim are uploaded."
+                if pushEnabled {
+                    syncPushTopics(to: desiredPushTopics())
+                }
+                statusMessage = saveStatusMessage()
                 statusIsError = false
             } catch {
                 statusMessage = "Couldn't save: \(error.localizedDescription)"
@@ -209,6 +252,65 @@ struct EmailSubscriptionsView: View {
             }
             isSaving = false
         }
+    }
+
+    // MARK: - Push topic sync
+
+    /// Topics this view manages when push is on. Only rebbeim get topics for now —
+    /// the existing FCM convention from NotificationPreferencesView is `rebbe_<sanitized>`,
+    /// and there are no per-tag topics defined on the website.
+    private func desiredPushTopics() -> Set<String> {
+        Set(selectedRebbeim.map { "rebbe_\(sanitizeTopicName($0))" })
+    }
+
+    private func handlePushToggleChange(enabled: Bool) async {
+        if enabled {
+            // Make sure system permission is granted before subscribing —
+            // subscriptions still succeed without it, but notifications won't
+            // surface until iOS is allowed to deliver them.
+            await notifications.checkPermissionStatus()
+            if !notifications.hasPermission {
+                _ = await notifications.requestPermission()
+            }
+            syncPushTopics(to: desiredPushTopics())
+        } else {
+            // Unsubscribe from any topics this view added; leaves topics
+            // managed by NotificationPreferencesView untouched.
+            syncPushTopics(to: [])
+        }
+    }
+
+    /// Compute the diff between the previously-stored topic set and `desired`,
+    /// then subscribe / unsubscribe accordingly via FCM.
+    private func syncPushTopics(to desired: Set<String>) {
+        let previous = Set(UserDefaults.standard.stringArray(forKey: Self.pushTopicsKey) ?? [])
+
+        for topic in desired.subtracting(previous) {
+            notifications.subscribeToTopic(topic)
+        }
+        for topic in previous.subtracting(desired) {
+            notifications.unsubscribeFromTopic(topic)
+        }
+        UserDefaults.standard.set(Array(desired), forKey: Self.pushTopicsKey)
+    }
+
+    /// Matches NotificationPreferencesView.sanitizeTopicName so both screens
+    /// produce identical topic names (FCM topic chars: alphanumerics + `_`).
+    private func sanitizeTopicName(_ name: String) -> String {
+        let allowed = CharacterSet.alphanumerics
+        return name.lowercased().unicodeScalars
+            .map { allowed.contains($0) ? String($0) : "_" }
+            .joined()
+    }
+
+    private func saveStatusMessage() -> String {
+        let nothingSelected = selectedRebbeim.isEmpty && selectedTags.isEmpty
+        if nothingSelected {
+            return "Saved — you won't receive any new shiur emails or alerts."
+        }
+        return pushEnabled
+            ? "Saved — you'll be emailed and alerted on this device when matching shiurim are uploaded."
+            : "Saved — you'll be emailed when matching shiurim are uploaded."
     }
 }
 
