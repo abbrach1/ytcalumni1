@@ -7,7 +7,9 @@ struct ContactsView: View {
     @State private var rebbeim: [Rebbe] = []
     @State private var alumni: [AlumniContact] = []
     @State private var alumniSearchText = ""
+    @State private var rebbeimSearchText = ""
     @State private var expandedAlumniId: String?
+    @State private var expandedRebbeId: String?
     @State private var isLoading = true
     @State private var selectedTab: ContactTab = .rebbeim
     @State private var showEditSheet = false
@@ -90,13 +92,75 @@ struct ContactsView: View {
     }
     
     // MARK: - Rebbeim Section
+
+    private var filteredRebbeim: [Rebbe] {
+        if rebbeimSearchText.isEmpty { return rebbeim }
+        let q = rebbeimSearchText.lowercased()
+        return rebbeim.filter {
+            $0.name.lowercased().contains(q) || $0.title.lowercased().contains(q)
+        }
+    }
+
     private var rebbeimSection: some View {
         VStack(spacing: 16) {
-            comingSoonCard(
-                icon: "book.fill",
-                title: "Rebbeim Directory Coming Soon",
-                message: "We are working on building the Rebbeim directory. Check back soon for contact information for all the Rebbeim."
+            // Search bar
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.navy.opacity(0.4))
+                TextField("Search Rebbeim by name or title", text: $rebbeimSearchText)
+                    .font(.subheadline)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                if !rebbeimSearchText.isEmpty {
+                    Button(action: { rebbeimSearchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.navy.opacity(0.4))
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color.white)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.gold.opacity(0.3), lineWidth: 1)
             )
+
+            if isLoading && rebbeim.isEmpty {
+                HStack { Spacer(); ProgressView().tint(.navy); Spacer() }
+                    .padding(.vertical, 40)
+            } else if filteredRebbeim.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: rebbeimSearchText.isEmpty ? "book.fill" : "magnifyingglass")
+                        .font(.system(size: 36))
+                        .foregroundColor(.navy.opacity(0.3))
+                    Text(rebbeimSearchText.isEmpty ? "No Rebbeim listed yet" : "No results found")
+                        .font(.headline)
+                        .foregroundColor(.navy)
+                    if !rebbeimSearchText.isEmpty {
+                        Text("Try a different search term.")
+                            .font(.subheadline)
+                            .foregroundColor(.navy.opacity(0.6))
+                    }
+                }
+                .padding(32)
+                .frame(maxWidth: .infinity)
+                .background(Color.white)
+                .cornerRadius(16)
+                .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+            } else {
+                ForEach(filteredRebbeim) { rebbe in
+                    RebbeContactCard(
+                        rebbe: rebbe,
+                        isExpanded: expandedRebbeId == rebbe.id,
+                        onTap: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                expandedRebbeId = (expandedRebbeId == rebbe.id) ? nil : rebbe.id
+                            }
+                        }
+                    )
+                }
+            }
         }
     }
     
@@ -489,6 +553,144 @@ struct AlumniContactCard: View {
     private func openPhone(_ phone: String) {
         let cleaned = phone.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
         if let url = URL(string: "tel:\(cleaned)") {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
+// MARK: - Rebbe Contact Card
+struct RebbeContactCard: View {
+    let rebbe: Rebbe
+    let isExpanded: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button(action: onTap) {
+                HStack(spacing: 14) {
+                    avatar
+                        .frame(width: 44, height: 44)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(rebbe.name)
+                            .font(.headline)
+                            .foregroundColor(.navy)
+                            .lineLimit(1)
+
+                        if !rebbe.title.isEmpty {
+                            Text(rebbe.title)
+                                .font(.caption)
+                                .foregroundColor(.navy.opacity(0.6))
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer()
+
+                    if hasContact {
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.navy.opacity(0.4))
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                }
+                .padding(16)
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasContact)
+
+            if isExpanded && hasContact {
+                Divider().padding(.horizontal, 16)
+
+                VStack(spacing: 12) {
+                    if let email = rebbe.email, !email.isEmpty {
+                        Button(action: { open("mailto:\(email)") }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "envelope.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gold)
+                                    .frame(width: 24)
+                                Text(email)
+                                    .font(.subheadline)
+                                    .foregroundColor(.navy)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if let phone = rebbe.phone, !phone.isEmpty {
+                        Button(action: {
+                            let cleaned = phone.components(separatedBy: CharacterSet.decimalDigits.inverted).joined()
+                            open("tel:\(cleaned)")
+                        }) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "phone.fill")
+                                    .font(.subheadline)
+                                    .foregroundColor(.gold)
+                                    .frame(width: 24)
+                                Text(phone)
+                                    .font(.subheadline)
+                                    .foregroundColor(.navy)
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
+    }
+
+    private var hasContact: Bool {
+        (rebbe.email?.isEmpty == false) || (rebbe.phone?.isEmpty == false)
+    }
+
+    @ViewBuilder
+    private var avatar: some View {
+        if let urlString = rebbe.photoUrl, let url = URL(string: urlString), !urlString.isEmpty {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().aspectRatio(contentMode: .fill)
+                case .failure, .empty:
+                    initialsCircle
+                @unknown default:
+                    initialsCircle
+                }
+            }
+            .clipShape(Circle())
+        } else {
+            initialsCircle
+        }
+    }
+
+    private var initialsCircle: some View {
+        ZStack {
+            Circle().fill(Color.navy.opacity(0.1))
+            Text(initials)
+                .font(.headline)
+                .foregroundColor(.navy)
+        }
+    }
+
+    private var initials: String {
+        let parts = rebbe.name.split(separator: " ")
+        if parts.count >= 2 {
+            return String(parts[0].prefix(1) + parts[parts.count - 1].prefix(1)).uppercased()
+        }
+        return String(rebbe.name.prefix(2)).uppercased()
+    }
+
+    private func open(_ urlString: String) {
+        if let url = URL(string: urlString) {
             UIApplication.shared.open(url)
         }
     }

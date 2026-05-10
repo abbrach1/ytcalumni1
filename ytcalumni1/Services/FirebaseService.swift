@@ -4,7 +4,7 @@ import Combine
 
 class FirebaseService: ObservableObject {
     static let shared = FirebaseService()
-    
+
     private let db = Firestore.firestore()
     
     // MARK: - Shiurim
@@ -23,18 +23,6 @@ class FirebaseService: ObservableObject {
             .getDocuments()
         
         return snapshot.documents.first.flatMap { Shiur(document: $0) }
-    }
-    
-    func incrementPlayCount(shiurId: String) async throws {
-        try await db.collection("shiurim").document(shiurId).updateData([
-            "playCount": FieldValue.increment(Int64(1))
-        ])
-    }
-    
-    func incrementDownloadCount(shiurId: String) async throws {
-        try await db.collection("shiurim").document(shiurId).updateData([
-            "downloadCount": FieldValue.increment(Int64(1))
-        ])
     }
     
     // MARK: - Events
