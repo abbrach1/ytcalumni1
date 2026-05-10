@@ -105,6 +105,9 @@ struct YTCAlumniApp: App {
                     // Re-log pageview so this counts toward today's active users
                     // in the website's admin Analytics tab.
                     Task { await AnalyticsService.shared.trackPageView(path: "/") }
+                    // Pick up subscription changes the user may have made on
+                    // the website while the app was in the background.
+                    Task { await NotificationManager.shared.syncPushTopicsFromSubscription() }
                 }
         }
     }

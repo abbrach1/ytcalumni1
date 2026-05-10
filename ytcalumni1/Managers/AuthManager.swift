@@ -34,6 +34,9 @@ class AuthManager: ObservableObject {
                     // Logs an "/" pageview to the website's tracking API so
                     // this user shows up in the admin Analytics tab as iOS.
                     Task { await AnalyticsService.shared.trackPageView(path: "/") }
+                    // Pull subscription doc and mirror to FCM topics, so a
+                    // signup the user did on the website reaches this device.
+                    Task { await NotificationManager.shared.syncPushTopicsFromSubscription() }
                 } else {
                     self?.isApproved = false
                     self?.isAdmin = false
