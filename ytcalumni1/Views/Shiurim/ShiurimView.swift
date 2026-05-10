@@ -118,7 +118,7 @@ struct ShiurimView: View {
                 Text("Shiurim")
                     .font(.system(size: 24, weight: .bold, design: .serif))
                     .foregroundColor(.cream)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 
                 // Search bar
                 HStack(spacing: 12) {
@@ -287,7 +287,9 @@ struct ShiurimView: View {
             await loadPlaybackPositions()
         }
         .refreshable {
-            await loadShiurim()
+            // Force a network fetch so pull-to-refresh always shows the latest;
+            // a tab switch or returning to this view uses the in-memory cache.
+            await loadShiurim(forceRefresh: true)
             await loadSavedShiurim()
             await loadPlaybackPositions()
         }
@@ -304,10 +306,10 @@ struct ShiurimView: View {
         }
     }
     
-    private func loadShiurim() async {
+    private func loadShiurim(forceRefresh: Bool = false) async {
         isLoading = true
         do {
-            shiurim = try await FirebaseService.shared.fetchShiurim()
+            shiurim = try await FirebaseService.shared.fetchShiurim(forceRefresh: forceRefresh)
         } catch {
             print("Error loading shiurim: \(error)")
         }

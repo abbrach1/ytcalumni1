@@ -13,10 +13,6 @@ struct EventsView: View {
         events.filter { !$0.isPast }
     }
     
-    private var pastEvents: [Event] {
-        events.filter { $0.isPast }
-    }
-    
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -55,21 +51,6 @@ struct EventsView: View {
                                 .foregroundColor(.navy.opacity(0.6))
                         }
                         .padding(.vertical, 40)
-                    }
-                    
-                    // Past Events Section
-                    if !pastEvents.isEmpty {
-                        VStack(alignment: .leading, spacing: 16) {
-                            Text("Past")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundColor(.navy.opacity(0.7))
-                            
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                                ForEach(pastEvents.prefix(8)) { event in
-                                    PastEventCard(event: event)
-                                }
-                            }
-                        }
                     }
                     
                     // Submit Simcha Section
@@ -237,47 +218,6 @@ struct EventDetailCard: View {
             endPoint: .trailing
         )
         .frame(height: 12)
-    }
-}
-
-// MARK: - Past Event Card
-struct PastEventCard: View {
-    let event: Event
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Date badge
-            VStack(spacing: 0) {
-                Text(event.monthAbbreviation)
-                    .font(.system(size: 8).weight(.medium))
-                    .foregroundColor(.navy.opacity(0.6))
-                Text(event.dayNumber)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundColor(.navy)
-            }
-            .frame(width: 44)
-            .padding(.vertical, 6)
-            .background(Color.navy.opacity(0.1))
-            .cornerRadius(6)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(event.eventName)
-                    .font(.caption.weight(.medium))
-                    .foregroundColor(.navy)
-                    .lineLimit(1)
-                
-                Text(event.personFamily)
-                    .font(.caption2)
-                    .foregroundColor(.navy.opacity(0.5))
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-        }
-        .padding(12)
-        .background(Color.white)
-        .cornerRadius(10)
-        .shadow(color: Color.black.opacity(0.04), radius: 4, x: 0, y: 2)
     }
 }
 
