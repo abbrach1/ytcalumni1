@@ -6,14 +6,24 @@ class FirebaseService: ObservableObject {
     static let shared = FirebaseService()
 
     private let db = Firestore.firestore()
-    
+
+    /// In-memory cache of the shiurim list. Populated on first read and
+    /// reused for the lifetime of the app process — cleared by relaunching,
+    /// or bypassed via fetchShiurim(forceRefresh: true) (pull-to-refresh).
+    private var cachedShiurim: [Shiur]?
+
     // MARK: - Shiurim
-    func fetchShiurim() async throws -> [Shiur] {
+    func fetchShiurim(forceRefresh: Bool = false) async throws -> [Shiur] {
+        if !forceRefresh, let cached = cachedShiurim {
+            return cached
+        }
         let snapshot = try await db.collection("shiurim")
             .order(by: "date", descending: true)
             .getDocuments()
-        
-        return snapshot.documents.compactMap { Shiur(document: $0) }
+
+        let shiurim = snapshot.documents.compactMap { Shiur(document: $0) }
+        cachedShiurim = shiurim
+        return shiurim
     }
     
     func fetchMostRecentShiur() async throws -> Shiur? {

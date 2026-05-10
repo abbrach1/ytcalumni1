@@ -77,6 +77,11 @@ struct HomeView: View {
                     if !alumniPhotos.isEmpty {
                         alumniSpotlightSection
                     }
+
+                    // Upcoming Simchos (next 2)
+                    if !upcomingEvents.isEmpty {
+                        upcomingEventsSection
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 24)
@@ -275,22 +280,20 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 SectionHeader(title: "Upcoming Simchos", icon: "party.popper.fill")
-                
+
                 Spacer()
-                
+
                 NavigationLink(destination: EventsView()) {
                     Text("See All")
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(.gold)
                 }
             }
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 16) {
-                    ForEach(upcomingEvents) { event in
-                        EventCard(event: event)
-                            .frame(width: 280)
-                    }
+
+            VStack(spacing: 12) {
+                ForEach(upcomingEvents.prefix(2)) { event in
+                    EventCard(event: event)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }

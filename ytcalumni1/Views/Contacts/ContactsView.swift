@@ -77,8 +77,7 @@ struct ContactsView: View {
             }
         }
         .background(Color.cream.ignoresSafeArea())
-        .navigationTitle("Contacts")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarHidden(true)
         .task {
             await loadData()
         }
