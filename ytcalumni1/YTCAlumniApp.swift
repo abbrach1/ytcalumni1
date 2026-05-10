@@ -98,6 +98,8 @@ struct YTCAlumniApp: App {
                 .task {
                     // Request notification permission
                     await NotificationManager.shared.requestPermission()
+                    // Drop topic subscriptions that are no longer offered (e.g. simchas)
+                    NotificationManager.shared.cleanupRetiredTopics()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
                     // Clear badge when app opens

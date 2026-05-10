@@ -2,13 +2,15 @@ import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
 
-/// Email subscriptions for new-shiur notifications. Mirrors the website's
-/// /subscriptions page (app/subscriptions/page.tsx in the website repo):
-///   reads:  settings/shiurOptions.{rebbeim, tags}  +  subscriptions/{uid}
-///   writes: subscriptions/{uid} = {userId, email, rebbeim, tags, updatedAt}
-/// The website's email-fanout job reads from `subscriptions` and matches
-/// these arrays against newly-uploaded shiurim.
-struct EmailSubscriptionsView: View {
+/// Single screen for everything notification-related. Email is the primary
+/// subscription model — it mirrors the website's /subscriptions page
+/// (reads settings/shiurOptions, writes subscriptions/{uid}). Push is an
+/// opt-in mirror of those same picks via FCM topics, plus two global
+/// push toggles for "all new shiurim" and "announcements".
+///
+/// Replaces the previous EmailSubscriptionsView + NotificationPreferencesView,
+/// which had overlapping per-rebbe controls.
+struct NotificationSettingsView: View {
     @EnvironmentObject var authManager: AuthManager
     @Environment(\.dismiss) var dismiss
 
@@ -16,11 +18,20 @@ struct EmailSubscriptionsView: View {
     @State private var tagsOptions: [String] = []
     @State private var selectedRebbeim: Set<String> = []
     @State private var selectedTags: Set<String> = []
+
     @State private var pushEnabled: Bool = NotificationManager.shared.pushSubscriptionsEnabled
+    @State private var allNewShiurimPush: Bool = UserDefaults.standard.object(forKey: allNewShiurimKey) as? Bool ?? true
+    @State private var announcementsPush: Bool = UserDefaults.standard.object(forKey: announcementsKey) as? Bool ?? true
+
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var statusMessage: String?
     @State private var statusIsError = false
+
+    private static let allNewShiurimKey = "notif_new_shiurim"
+    private static let announcementsKey = "notif_announcements"
+    private static let allNewShiurimTopic = "new_shiurim"
+    private static let announcementsTopic = "announcements"
 
     private let db = Firestore.firestore()
     private let notifications = NotificationManager.shared
@@ -35,6 +46,9 @@ struct EmailSubscriptionsView: View {
                         .padding(.top, 80)
                 } else {
                     pushToggleRow
+                    if pushEnabled {
+                        broadcastTogglesCard
+                    }
                     section(
                         title: "Rebbeim",
                         options: rebbeimOptions,
@@ -45,7 +59,8 @@ struct EmailSubscriptionsView: View {
                         title: "Topics",
                         options: tagsOptions,
                         selected: $selectedTags,
-                        emptyText: "No topics available yet."
+                        emptyText: "No topics available yet.",
+                        footer: "Topics are email-only — no per-topic push notifications yet."
                     )
                     summary
                 }
@@ -60,7 +75,7 @@ struct EmailSubscriptionsView: View {
             .padding(.vertical, 16)
         }
         .background(Color.cream.ignoresSafeArea())
-        .navigationTitle("Email Subscriptions")
+        .navigationTitle("Notifications")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -85,7 +100,7 @@ struct EmailSubscriptionsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "bell.badge.fill").foregroundColor(.gold)
-                Text("Shiur Email Subscriptions")
+                Text("Email & Push Notifications")
                     .font(.headline)
                     .foregroundColor(.navy)
             }
@@ -110,7 +125,7 @@ struct EmailSubscriptionsView: View {
                 Text("Also send iPhone push notifications")
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(.navy)
-                Text("Get an instant alert on this device when a matching shiur is uploaded.")
+                Text("Get an instant alert on this device for the things you've subscribed to below.")
                     .font(.caption)
                     .foregroundColor(.navy.opacity(0.6))
                     .fixedSize(horizontal: false, vertical: true)
@@ -125,21 +140,75 @@ struct EmailSubscriptionsView: View {
                 }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.gold.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .background(cardBackground)
         .padding(.horizontal, 16)
+    }
+
+    private var broadcastTogglesCard: some View {
+        VStack(spacing: 0) {
+            broadcastToggle(
+                title: "All new shiurim",
+                description: "Get notified about every new shiur, not just your picks.",
+                icon: "headphones",
+                isOn: $allNewShiurimPush,
+                topic: Self.allNewShiurimTopic,
+                userDefaultsKey: Self.allNewShiurimKey
+            )
+            Divider().padding(.leading, 52)
+            broadcastToggle(
+                title: "Announcements",
+                description: "Community announcements from the office.",
+                icon: "megaphone.fill",
+                isOn: $announcementsPush,
+                topic: Self.announcementsTopic,
+                userDefaultsKey: Self.announcementsKey
+            )
+        }
+        .background(cardBackground)
+        .padding(.horizontal, 16)
+    }
+
+    private func broadcastToggle(
+        title: String,
+        description: String,
+        icon: String,
+        isOn: Binding<Bool>,
+        topic: String,
+        userDefaultsKey: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .foregroundColor(.gold)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.navy)
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.navy.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(.gold)
+                .onChange(of: isOn.wrappedValue) { _, newValue in
+                    UserDefaults.standard.set(newValue, forKey: userDefaultsKey)
+                    if newValue {
+                        notifications.subscribeToTopic(topic)
+                    } else {
+                        notifications.unsubscribeFromTopic(topic)
+                    }
+                }
+        }
+        .padding(16)
     }
 
     private var summary: some View {
         let total = selectedRebbeim.count + selectedTags.count
         return Text(total == 0
-                    ? "No subscriptions selected — you won't receive emails."
+                    ? "No rebbeim or topics selected — you won't receive emails for matching shiurim."
                     : "\(total) subscription\(total == 1 ? "" : "s") selected.")
             .font(.caption)
             .foregroundColor(.navy.opacity(0.6))
@@ -151,7 +220,8 @@ struct EmailSubscriptionsView: View {
         title: String,
         options: [String],
         selected: Binding<Set<String>>,
-        emptyText: String
+        emptyText: String,
+        footer: String? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -183,17 +253,25 @@ struct EmailSubscriptionsView: View {
                     }
                 }
             }
+            if let footer {
+                Text(footer)
+                    .font(.caption2)
+                    .foregroundColor(.navy.opacity(0.5))
+                    .padding(.top, 2)
+            }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.gold.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .background(cardBackground)
         .padding(.horizontal, 16)
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(Color.white)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.gold.opacity(0.2), lineWidth: 1)
+            )
     }
 
     private func load() async {
@@ -229,8 +307,6 @@ struct EmailSubscriptionsView: View {
         statusIsError = false
         Task {
             do {
-                // setData (no merge) matches the website's setDoc — the doc is
-                // owned by this page, so a save is the full new state.
                 try await db.collection("subscriptions").document(user.uid).setData([
                     "userId": user.uid,
                     "email": email,
@@ -253,32 +329,33 @@ struct EmailSubscriptionsView: View {
 
     // MARK: - Push topic sync
 
-    /// Topics this view manages when push is on. Only rebbeim get topics for now —
-    /// the website's send-notification fan-out uses the rebbe_<sanitized>
-    /// convention, and there are no per-tag topics defined yet.
+    /// Per-rebbe topics this view manages when push is on. No per-tag topics —
+    /// the website's notify pipeline doesn't fan out tag-keyed FCM yet.
     private func desiredPushTopics() -> Set<String> {
         Set(selectedRebbeim.map { "rebbe_\(NotificationManager.sanitizeTopicName($0))" })
     }
 
     private func handlePushToggleChange(enabled: Bool) async {
         if enabled {
-            // Make sure system permission is granted before subscribing —
-            // FCM subscriptions still succeed without it, but iOS won't
-            // surface alerts until the user allows them.
             await notifications.checkPermissionStatus()
             if !notifications.hasPermission {
                 _ = await notifications.requestPermission()
             }
             notifications.applyPushTopicDiff(desired: desiredPushTopics())
+            // Honor the broadcast toggles when push first comes on
+            if allNewShiurimPush { notifications.subscribeToTopic(Self.allNewShiurimTopic) }
+            if announcementsPush { notifications.subscribeToTopic(Self.announcementsTopic) }
         } else {
             notifications.applyPushTopicDiff(desired: [])
+            notifications.unsubscribeFromTopic(Self.allNewShiurimTopic)
+            notifications.unsubscribeFromTopic(Self.announcementsTopic)
         }
     }
 
     private func saveStatusMessage() -> String {
         let nothingSelected = selectedRebbeim.isEmpty && selectedTags.isEmpty
         if nothingSelected {
-            return "Saved — you won't receive any new shiur emails or alerts."
+            return "Saved — you won't receive any new shiur emails."
         }
         return pushEnabled
             ? "Saved — you'll be emailed and alerted on this device when matching shiurim are uploaded."
@@ -352,7 +429,7 @@ private struct ChipFlow: Layout {
 
 #Preview {
     NavigationStack {
-        EmailSubscriptionsView()
+        NotificationSettingsView()
             .environmentObject(AuthManager())
     }
 }
