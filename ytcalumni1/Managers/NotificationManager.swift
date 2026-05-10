@@ -70,6 +70,17 @@ class NotificationManager: NSObject, ObservableObject {
         subscribeToTopic("new_shiurim")
         subscribeToTopic("events")
     }
+
+    /// Unsubscribe from topics that were once managed by the old
+    /// NotificationPreferencesView but are no longer offered to users.
+    /// Idempotent (FCM no-ops when not subscribed) and gated by a
+    /// UserDefaults flag so it only runs once per device.
+    func cleanupRetiredTopics() {
+        let key = "notif_cleanup_v1_done"
+        if UserDefaults.standard.bool(forKey: key) { return }
+        unsubscribeFromTopic("simchas")
+        UserDefaults.standard.set(true, forKey: key)
+    }
     
     /// Subscribe to a topic
     func subscribeToTopic(_ topic: String) {
@@ -96,14 +107,13 @@ class NotificationManager: NSObject, ObservableObject {
     // MARK: - Subscription-driven Push Topics
     //
     // The website writes the user's preferences to `subscriptions/{uid}` (the
-    // same doc EmailSubscriptionsView writes). When push mirroring is on
+    // same doc NotificationSettingsView writes). When push mirroring is on
     // (default), we keep this device subscribed to a `rebbe_<sanitized>` FCM
     // topic for each selected rebbe — so the website's existing
     // /api/send-notification fan-out delivers an alert here too.
     //
-    // We diff against the last synced set in UserDefaults so the toggle's
-    // off-state can cleanly unsubscribe only the topics this flow added,
-    // without disturbing topics owned by NotificationPreferencesView.
+    // We diff against the last synced set in UserDefaults so a toggle-off
+    // cleanly unsubscribes only the topics this flow added.
 
     static let pushSubscriptionsEnabledKey = "subscriptions_push_enabled"
     static let pushSubscriptionsTopicsKey = "subscriptions_push_topics"
@@ -158,8 +168,9 @@ class NotificationManager: NSObject, ObservableObject {
         UserDefaults.standard.set(Array(desired), forKey: Self.pushSubscriptionsTopicsKey)
     }
 
-    /// Same sanitization as NotificationPreferencesView so both screens
-    /// produce identical FCM topic names.
+    /// FCM topic sanitization rule (alphanumerics + `_`). Must match the
+    /// website's lib/platform.ts equivalent so iOS and web pick the same
+    /// topic name for a given rebbe.
     static func sanitizeTopicName(_ name: String) -> String {
         let allowed = CharacterSet.alphanumerics
         return name.lowercased().unicodeScalars
