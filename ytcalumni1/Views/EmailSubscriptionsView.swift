@@ -16,14 +16,11 @@ struct EmailSubscriptionsView: View {
     @State private var tagsOptions: [String] = []
     @State private var selectedRebbeim: Set<String> = []
     @State private var selectedTags: Set<String> = []
-    @State private var pushEnabled: Bool = UserDefaults.standard.bool(forKey: pushEnabledKey)
+    @State private var pushEnabled: Bool = NotificationManager.shared.pushSubscriptionsEnabled
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var statusMessage: String?
     @State private var statusIsError = false
-
-    private static let pushEnabledKey = "subscriptions_push_enabled"
-    private static let pushTopicsKey = "subscriptions_push_topics" // [String] currently subscribed
 
     private let db = Firestore.firestore()
     private let notifications = NotificationManager.shared
@@ -123,7 +120,7 @@ struct EmailSubscriptionsView: View {
                 .labelsHidden()
                 .tint(.gold)
                 .onChange(of: pushEnabled) { _, newValue in
-                    UserDefaults.standard.set(newValue, forKey: Self.pushEnabledKey)
+                    notifications.setPushSubscriptionsEnabled(newValue)
                     Task { await handlePushToggleChange(enabled: newValue) }
                 }
         }
@@ -242,7 +239,7 @@ struct EmailSubscriptionsView: View {
                     "updatedAt": ISO8601DateFormatter().string(from: Date())
                 ])
                 if pushEnabled {
-                    syncPushTopics(to: desiredPushTopics())
+                    notifications.applyPushTopicDiff(desired: desiredPushTopics())
                 }
                 statusMessage = saveStatusMessage()
                 statusIsError = false
@@ -257,50 +254,25 @@ struct EmailSubscriptionsView: View {
     // MARK: - Push topic sync
 
     /// Topics this view manages when push is on. Only rebbeim get topics for now —
-    /// the existing FCM convention from NotificationPreferencesView is `rebbe_<sanitized>`,
-    /// and there are no per-tag topics defined on the website.
+    /// the website's send-notification fan-out uses the rebbe_<sanitized>
+    /// convention, and there are no per-tag topics defined yet.
     private func desiredPushTopics() -> Set<String> {
-        Set(selectedRebbeim.map { "rebbe_\(sanitizeTopicName($0))" })
+        Set(selectedRebbeim.map { "rebbe_\(NotificationManager.sanitizeTopicName($0))" })
     }
 
     private func handlePushToggleChange(enabled: Bool) async {
         if enabled {
             // Make sure system permission is granted before subscribing —
-            // subscriptions still succeed without it, but notifications won't
-            // surface until iOS is allowed to deliver them.
+            // FCM subscriptions still succeed without it, but iOS won't
+            // surface alerts until the user allows them.
             await notifications.checkPermissionStatus()
             if !notifications.hasPermission {
                 _ = await notifications.requestPermission()
             }
-            syncPushTopics(to: desiredPushTopics())
+            notifications.applyPushTopicDiff(desired: desiredPushTopics())
         } else {
-            // Unsubscribe from any topics this view added; leaves topics
-            // managed by NotificationPreferencesView untouched.
-            syncPushTopics(to: [])
+            notifications.applyPushTopicDiff(desired: [])
         }
-    }
-
-    /// Compute the diff between the previously-stored topic set and `desired`,
-    /// then subscribe / unsubscribe accordingly via FCM.
-    private func syncPushTopics(to desired: Set<String>) {
-        let previous = Set(UserDefaults.standard.stringArray(forKey: Self.pushTopicsKey) ?? [])
-
-        for topic in desired.subtracting(previous) {
-            notifications.subscribeToTopic(topic)
-        }
-        for topic in previous.subtracting(desired) {
-            notifications.unsubscribeFromTopic(topic)
-        }
-        UserDefaults.standard.set(Array(desired), forKey: Self.pushTopicsKey)
-    }
-
-    /// Matches NotificationPreferencesView.sanitizeTopicName so both screens
-    /// produce identical topic names (FCM topic chars: alphanumerics + `_`).
-    private func sanitizeTopicName(_ name: String) -> String {
-        let allowed = CharacterSet.alphanumerics
-        return name.lowercased().unicodeScalars
-            .map { allowed.contains($0) ? String($0) : "_" }
-            .joined()
     }
 
     private func saveStatusMessage() -> String {

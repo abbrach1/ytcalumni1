@@ -93,6 +93,80 @@ class NotificationManager: NSObject, ObservableObject {
         }
     }
     
+    // MARK: - Subscription-driven Push Topics
+    //
+    // The website writes the user's preferences to `subscriptions/{uid}` (the
+    // same doc EmailSubscriptionsView writes). When push mirroring is on
+    // (default), we keep this device subscribed to a `rebbe_<sanitized>` FCM
+    // topic for each selected rebbe — so the website's existing
+    // /api/send-notification fan-out delivers an alert here too.
+    //
+    // We diff against the last synced set in UserDefaults so the toggle's
+    // off-state can cleanly unsubscribe only the topics this flow added,
+    // without disturbing topics owned by NotificationPreferencesView.
+
+    static let pushSubscriptionsEnabledKey = "subscriptions_push_enabled"
+    static let pushSubscriptionsTopicsKey = "subscriptions_push_topics"
+
+    /// True if push should mirror the user's email subscriptions. Defaults
+    /// to true; only false when the user has explicitly toggled it off.
+    var pushSubscriptionsEnabled: Bool {
+        if UserDefaults.standard.object(forKey: Self.pushSubscriptionsEnabledKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: Self.pushSubscriptionsEnabledKey)
+    }
+
+    func setPushSubscriptionsEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.pushSubscriptionsEnabledKey)
+    }
+
+    /// Reads `subscriptions/{uid}` and (if mirroring is enabled) syncs FCM
+    /// rebbe_* topics to match. Safe to call on every launch + foreground.
+    func syncPushTopicsFromSubscription() async {
+        guard let userId = Auth.auth().currentUser?.uid else { return }
+        guard pushSubscriptionsEnabled else {
+            // User opted out — make sure no stale topics from a previous
+            // mirror remain subscribed on this device.
+            applyPushTopicDiff(desired: [])
+            return
+        }
+
+        do {
+            let doc = try await Firestore.firestore()
+                .collection("subscriptions")
+                .document(userId)
+                .getDocument()
+            let rebbeim = (doc.data()?["rebbeim"] as? [String]) ?? []
+            let desired = Set(rebbeim.map { "rebbe_\(Self.sanitizeTopicName($0))" })
+            applyPushTopicDiff(desired: desired)
+        } catch {
+            print("❌ syncPushTopicsFromSubscription: \(error)")
+        }
+    }
+
+    /// Subscribe / unsubscribe FCM topics to bring this device into the
+    /// desired set. Persists the result so the next call is a minimal diff.
+    func applyPushTopicDiff(desired: Set<String>) {
+        let previous = Set(UserDefaults.standard.stringArray(forKey: Self.pushSubscriptionsTopicsKey) ?? [])
+        for topic in desired.subtracting(previous) {
+            subscribeToTopic(topic)
+        }
+        for topic in previous.subtracting(desired) {
+            unsubscribeFromTopic(topic)
+        }
+        UserDefaults.standard.set(Array(desired), forKey: Self.pushSubscriptionsTopicsKey)
+    }
+
+    /// Same sanitization as NotificationPreferencesView so both screens
+    /// produce identical FCM topic names.
+    static func sanitizeTopicName(_ name: String) -> String {
+        let allowed = CharacterSet.alphanumerics
+        return name.lowercased().unicodeScalars
+            .map { allowed.contains($0) ? String($0) : "_" }
+            .joined()
+    }
+
     // MARK: - Token Management
     
     /// Save FCM token to Firestore for the current user
