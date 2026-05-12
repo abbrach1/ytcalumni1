@@ -19,6 +19,7 @@ struct HomeView: View {
     @State private var selectedPhoto: AlumniPhoto?
     @State private var showAnnouncementsExpanded = false
     @State private var showNotificationSettings = false
+    @State private var showDownloads = false
     @State private var playbackPositions: [String: Double] = [:]
     
     private let timer = Timer.publish(every: 4, on: .main, in: .common).autoconnect()
@@ -101,6 +102,11 @@ struct HomeView: View {
                 NotificationSettingsView()
             }
         }
+        .sheet(isPresented: $showDownloads) {
+            NavigationStack {
+                DownloadsView()
+            }
+        }
     }
     
     // MARK: - Content Section (keeping for reference but not using)
@@ -158,6 +164,9 @@ struct HomeView: View {
                     Menu {
                         Button(action: { showNotificationSettings = true }) {
                             Label("Notifications", systemImage: "bell.fill")
+                        }
+                        Button(action: { showDownloads = true }) {
+                            Label("Downloads", systemImage: "arrow.down.circle.fill")
                         }
                         if authManager.isAdmin {
                             Button(action: {}) {

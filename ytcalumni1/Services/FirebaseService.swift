@@ -5,6 +5,11 @@ import Combine
 class FirebaseService: ObservableObject {
     static let shared = FirebaseService()
 
+    /// True when the last `fetchShiurim` call had to fall back to the
+    /// on-disk cache because Firestore was unreachable. UI surfaces this as
+    /// a small "Offline" banner so users know the list may be stale.
+    @Published var isOfflineFallback: Bool = false
+
     private let db = Firestore.firestore()
 
     /// In-memory cache of the shiurim list. Populated on first read and
@@ -12,18 +17,60 @@ class FirebaseService: ObservableObject {
     /// or bypassed via fetchShiurim(forceRefresh: true) (pull-to-refresh).
     private var cachedShiurim: [Shiur]?
 
+    /// Disk path for the offline-mode shiurim cache. Survives relaunch so
+    /// the app shows the last-known list when launched without connectivity.
+    private var shiurimCacheURL: URL? {
+        let base = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return base?.appendingPathComponent("shiurim-cache.json")
+    }
+
     // MARK: - Shiurim
     func fetchShiurim(forceRefresh: Bool = false) async throws -> [Shiur] {
         if !forceRefresh, let cached = cachedShiurim {
             return cached
         }
-        let snapshot = try await db.collection("shiurim")
-            .order(by: "date", descending: true)
-            .getDocuments()
 
-        let shiurim = snapshot.documents.compactMap { Shiur(document: $0) }
-        cachedShiurim = shiurim
-        return shiurim
+        do {
+            let snapshot = try await db.collection("shiurim")
+                .order(by: "date", descending: true)
+                .getDocuments()
+
+            let shiurim = snapshot.documents.compactMap { Shiur(document: $0) }
+            cachedShiurim = shiurim
+            persistShiurimToDisk(shiurim)
+            await MainActor.run { self.isOfflineFallback = false }
+            return shiurim
+        } catch {
+            // Network/Firestore failure — fall back to last on-disk snapshot
+            // so the user can still browse (and play downloaded) shiurim.
+            if let cached = loadShiurimFromDisk() {
+                cachedShiurim = cached
+                await MainActor.run { self.isOfflineFallback = true }
+                return cached
+            }
+            throw error
+        }
+    }
+
+    private func persistShiurimToDisk(_ shiurim: [Shiur]) {
+        guard let url = shiurimCacheURL else { return }
+        do {
+            let data = try JSONEncoder().encode(shiurim)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            print("[firebase] Failed to persist shiurim cache: \(error)")
+        }
+    }
+
+    private func loadShiurimFromDisk() -> [Shiur]? {
+        guard let url = shiurimCacheURL,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode([Shiur].self, from: data)
     }
     
     func fetchMostRecentShiur() async throws -> Shiur? {

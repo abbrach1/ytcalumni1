@@ -32,6 +32,17 @@ class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDele
                      didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("❌ Failed to register for remote notifications: \(error)")
     }
+
+    // Called when iOS resumes us specifically to deliver pending background
+    // download events. Hand the completion handler to DownloadManager so the
+    // session's urlSessionDidFinishEvents can call it back.
+    func application(_ application: UIApplication,
+                     handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        Task { @MainActor in
+            DownloadManager.shared.backgroundCompletionHandler = completionHandler
+        }
+    }
     
     // MARK: - UNUserNotificationCenterDelegate
     
@@ -89,12 +100,14 @@ struct YTCAlumniApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var authManager = AuthManager()
     @StateObject private var audioPlayer = AudioPlayerManager()
-    
+    @StateObject private var downloads = DownloadManager.shared
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(authManager)
                 .environmentObject(audioPlayer)
+                .environmentObject(downloads)
                 .task {
                     // Request notification permission
                     await NotificationManager.shared.requestPermission()

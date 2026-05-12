@@ -318,8 +318,8 @@ struct FullPlayerView: View {
                     }
                 }
                 
-                // Speed control
-                HStack(spacing: 24) {
+                // Speed + sleep-timer controls
+                HStack(spacing: 12) {
                     Menu {
                         ForEach(audioPlayer.speedOptions, id: \.self) { speed in
                             Button(action: { audioPlayer.setSpeed(speed) }) {
@@ -341,6 +341,50 @@ struct FullPlayerView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background(Color.navy.opacity(0.1))
+                        .cornerRadius(20)
+                    }
+
+                    // Sleep timer
+                    Menu {
+                        if audioPlayer.sleepTimerMode != .off {
+                            Button(role: .destructive, action: {
+                                audioPlayer.cancelSleepTimer()
+                            }) {
+                                Label("Turn Off", systemImage: "xmark")
+                            }
+                            Divider()
+                        }
+                        ForEach([15, 30, 45, 60], id: \.self) { mins in
+                            Button(action: { audioPlayer.setSleepTimer(.minutes(mins)) }) {
+                                HStack {
+                                    Text("\(mins) minutes")
+                                    if case .minutes(let current) = audioPlayer.sleepTimerMode, current == mins {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                        Button(action: { audioPlayer.setSleepTimer(.endOfShiur) }) {
+                            HStack {
+                                Text("End of shiur")
+                                if audioPlayer.sleepTimerMode == .endOfShiur {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: audioPlayer.sleepTimerMode == .off ? "moon.zzz" : "moon.zzz.fill")
+                            if let remaining = audioPlayer.sleepTimerRemaining {
+                                Text(audioPlayer.formatTime(remaining))
+                                    .monospacedDigit()
+                            }
+                        }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(audioPlayer.sleepTimerMode == .off ? .navy : .gold)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background((audioPlayer.sleepTimerMode == .off ? Color.navy : Color.gold).opacity(0.1))
                         .cornerRadius(20)
                     }
                     

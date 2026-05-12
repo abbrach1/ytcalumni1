@@ -4,7 +4,8 @@ import FirebaseFirestore
 
 struct ShiurimView: View {
     @EnvironmentObject var audioPlayer: AudioPlayerManager
-    
+    @EnvironmentObject var downloadManager: DownloadManager
+
     @State private var shiurim: [Shiur] = []
     @State private var isLoading = true
     @State private var searchText = ""
@@ -13,6 +14,7 @@ struct ShiurimView: View {
     @State private var selectedSeriesFilter: String?
     @State private var showSavedOnly = false
     @State private var showInProgressOnly = false
+    @State private var showDownloadedOnly = false
     @State private var sortOrder: SortOrder = .dateDescending
     @State private var showFilters = false
     @State private var savedShiurimIds: Set<String> = []
@@ -38,8 +40,16 @@ struct ShiurimView: View {
     }
     
     private var filteredShiurim: [Shiur] {
-        var result = shiurim
-        
+        // When showing downloads only, fall back to the manifest so the list
+        // is still populated when the network fetch hasn't returned yet
+        // (or fails entirely while offline).
+        var result: [Shiur]
+        if showDownloadedOnly && shiurim.isEmpty {
+            result = downloadManager.downloads.values.map { $0.shiur }
+        } else {
+            result = shiurim
+        }
+
         // Search filter
         if !searchText.isEmpty {
             result = result.filter { shiur in
@@ -49,22 +59,22 @@ struct ShiurimView: View {
                 (shiur.series?.localizedCaseInsensitiveContains(searchText) ?? false)
             }
         }
-        
+
         // Rebbe filter
         if let rebbe = selectedRebbeFilter {
             result = result.filter { $0.rebbe == rebbe }
         }
-        
+
         // Tag filter
         if let tag = selectedTagFilter {
             result = result.filter { $0.tags.contains(tag) }
         }
-        
+
         // Series filter
         if let series = selectedSeriesFilter {
             result = result.filter { $0.series == series }
         }
-        
+
         // Saved filter
         if showSavedOnly {
             result = result.filter { shiur in
@@ -72,12 +82,20 @@ struct ShiurimView: View {
                 return savedShiurimIds.contains(id)
             }
         }
-        
+
         // In Progress filter
         if showInProgressOnly {
             result = result.filter { shiur in
                 guard let id = shiur.id else { return false }
                 return (playbackPositions[id] ?? 0) > 0
+            }
+        }
+
+        // Downloaded filter
+        if showDownloadedOnly {
+            result = result.filter { shiur in
+                guard let id = shiur.id else { return false }
+                return downloadManager.isDownloaded(id)
             }
         }
         
@@ -97,9 +115,9 @@ struct ShiurimView: View {
     }
     
     private var hasActiveFilters: Bool {
-        selectedRebbeFilter != nil || selectedTagFilter != nil || selectedSeriesFilter != nil || showSavedOnly || showInProgressOnly
+        selectedRebbeFilter != nil || selectedTagFilter != nil || selectedSeriesFilter != nil || showSavedOnly || showInProgressOnly || showDownloadedOnly
     }
-    
+
     private var activeFilterCount: Int {
         var count = 0
         if selectedRebbeFilter != nil { count += 1 }
@@ -107,6 +125,7 @@ struct ShiurimView: View {
         if selectedSeriesFilter != nil { count += 1 }
         if showSavedOnly { count += 1 }
         if showInProgressOnly { count += 1 }
+        if showDownloadedOnly { count += 1 }
         return count
     }
     
@@ -183,6 +202,15 @@ struct ShiurimView: View {
                         ) {
                             showInProgressOnly.toggle()
                             if showInProgressOnly { showSavedOnly = false }
+                        }
+
+                        // Downloaded filter
+                        QuickFilterChip(
+                            title: "Downloaded",
+                            icon: "arrow.down.circle.fill",
+                            isSelected: showDownloadedOnly
+                        ) {
+                            showDownloadedOnly.toggle()
                         }
                         
                         // Sort menu
@@ -383,6 +411,7 @@ struct ShiurimView: View {
         selectedSeriesFilter = nil
         showSavedOnly = false
         showInProgressOnly = false
+        showDownloadedOnly = false
         searchText = ""
     }
     
@@ -466,15 +495,21 @@ struct ActiveFilterTag: View {
 // MARK: - Shiur Row View
 struct ShiurRowView: View {
     @EnvironmentObject var audioPlayer: AudioPlayerManager
-    
+    @EnvironmentObject var downloadManager: DownloadManager
+
     let shiur: Shiur
     let isSaved: Bool
     let isCurrentlyPlaying: Bool
     let savedPosition: TimeInterval
     let onToggleSave: () -> Void
-    
+
     private var hasProgress: Bool {
         savedPosition > 0
+    }
+
+    private var downloadState: DownloadState {
+        guard let id = shiur.id else { return .idle }
+        return downloadManager.state(for: id)
     }
     
     var body: some View {
@@ -616,6 +651,11 @@ struct ShiurRowView: View {
                         .cornerRadius(8)
                     }
                 }
+
+                // Download / Delete / Progress button
+                if shiur.audioUrl != nil, shiur.id != nil {
+                    DownloadButton(shiur: shiur, state: downloadState)
+                }
             }
         }
         .padding(16)
@@ -629,6 +669,88 @@ struct ShiurRowView: View {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+// MARK: - Download Button
+struct DownloadButton: View {
+    @EnvironmentObject var downloadManager: DownloadManager
+    @State private var showDeleteConfirm = false
+
+    let shiur: Shiur
+    let state: DownloadState
+
+    var body: some View {
+        Button(action: handleTap) {
+            content
+                .font(.caption.weight(.medium))
+                .foregroundColor(foregroundColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(background)
+                .cornerRadius(8)
+        }
+        .confirmationDialog(
+            "Remove this download?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Remove Download", role: .destructive) {
+                if let id = shiur.id { downloadManager.deleteDownload(id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch state {
+        case .idle, .failed:
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.down.circle")
+                Text("Download")
+            }
+        case .downloading(let progress):
+            HStack(spacing: 6) {
+                ProgressView(value: progress)
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .tint(.navy)
+                Text("\(Int(progress * 100))%")
+            }
+        case .downloaded:
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Saved")
+            }
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch state {
+        case .downloaded: return .green
+        case .failed: return .red
+        default: return .navy
+        }
+    }
+
+    private var background: Color {
+        switch state {
+        case .downloaded: return Color.green.opacity(0.12)
+        case .failed: return Color.red.opacity(0.1)
+        default: return Color.navy.opacity(0.08)
+        }
+    }
+
+    private func handleTap() {
+        switch state {
+        case .idle, .failed:
+            downloadManager.download(shiur)
+        case .downloading:
+            if let id = shiur.id { downloadManager.cancelDownload(id) }
+        case .downloaded:
+            showDeleteConfirm = true
+        }
     }
 }
 
@@ -878,5 +1000,6 @@ struct EmptyStateView: View {
     NavigationStack {
         ShiurimView()
             .environmentObject(AudioPlayerManager())
+            .environmentObject(DownloadManager.shared)
     }
 }

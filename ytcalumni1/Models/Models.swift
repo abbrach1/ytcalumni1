@@ -2,7 +2,7 @@ import Foundation
 import FirebaseFirestore
 
 // MARK: - Shiur Model
-struct Shiur: Identifiable, Hashable {
+struct Shiur: Identifiable, Hashable, Codable {
     var id: String?
     let title: String
     let rebbe: String

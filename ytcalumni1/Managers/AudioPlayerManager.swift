@@ -15,10 +15,26 @@ class AudioPlayerManager: ObservableObject {
     @Published var playbackSpeed: Float = 1.0
     @Published var volume: Float = 1.0
     @Published var error: String?
-    
+
+    /// Seconds left on the sleep timer, or nil when no timer is running.
+    /// `endOfShiur` mode is encoded as nil here and surfaced via
+    /// `sleepTimerMode` so the FullPlayer can show the right label.
+    @Published var sleepTimerRemaining: TimeInterval?
+    @Published var sleepTimerMode: SleepTimerMode = .off
+
+    enum SleepTimerMode: Equatable {
+        case off
+        case minutes(Int)
+        case endOfShiur
+    }
+
     private var player: AVPlayer?
     private var playerItemObserver: AnyCancellable?
     private var timeObserver: Any?
+    private var endOfTrackObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
+    private var sleepTimer: Timer?
     private var playedShiurimIds: Set<String> = []
 
     // Firestore write throttling for playback position sync
@@ -27,10 +43,25 @@ class AudioPlayerManager: ObservableObject {
     private let firestoreSyncInterval: TimeInterval = 10
 
     let speedOptions: [Float] = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
-    
+
     init() {
         setupAudioSession()
         setupRemoteCommands()
+        setupInterruptionHandling()
+        setupRouteChangeHandling()
+    }
+
+    deinit {
+        if let observer = interruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = routeChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = endOfTrackObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        sleepTimer?.invalidate()
     }
     
     private func setupAudioSession() {
@@ -75,19 +106,30 @@ class AudioPlayerManager: ObservableObject {
     }
     
     func play(shiur: Shiur) async {
-        guard let audioUrlString = shiur.audioUrl,
-              let audioUrl = URL(string: processAudioUrl(audioUrlString)) else {
+        // Prefer the on-disk copy when the shiur has been downloaded — this
+        // also keeps playback working with no network.
+        let resolvedUrl: URL? = {
+            if let id = shiur.id, let local = DownloadManager.shared.localURL(for: id) {
+                return local
+            }
+            if let audioUrlString = shiur.audioUrl {
+                return URL(string: processAudioUrl(audioUrlString))
+            }
+            return nil
+        }()
+
+        guard let audioUrl = resolvedUrl else {
             error = "Invalid audio URL"
             return
         }
-        
+
         // Stop current playback
         stop()
-        
+
         currentShiur = shiur
         isLoading = true
         error = nil
-        
+
         let playerItem = AVPlayerItem(url: audioUrl)
         player = AVPlayer(playerItem: playerItem)
         player?.volume = volume
@@ -127,17 +169,24 @@ class AudioPlayerManager: ObservableObject {
             self?.currentTime = time.seconds.isNaN ? 0 : time.seconds
             self?.savePlaybackPosition()
             self?.updateNowPlayingInfo()
+            self?.tickEndOfShiurTimer()
         }
         
-        // Observe when playback ends
-        NotificationCenter.default.addObserver(
+        // Observe when playback ends. Keep the token so it's removed in stop()
+        // — without this, every play(shiur:) accumulated another observer that
+        // fired stale callbacks on subsequent items.
+        endOfTrackObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: playerItem,
             queue: .main
         ) { [weak self] _ in
-            self?.isPlaying = false
-            self?.currentTime = 0
-            self?.clearPlaybackPosition()
+            Task { @MainActor in
+                guard let self = self else { return }
+                self.isPlaying = false
+                self.currentTime = 0
+                self.clearPlaybackPosition()
+                self.cancelSleepTimer()
+            }
         }
     }
     
@@ -171,6 +220,10 @@ class AudioPlayerManager: ObservableObject {
         if let timeObserver = timeObserver {
             player?.removeTimeObserver(timeObserver)
         }
+        if let observer = endOfTrackObserver {
+            NotificationCenter.default.removeObserver(observer)
+            endOfTrackObserver = nil
+        }
         player = nil
         playerItemObserver = nil
         timeObserver = nil
@@ -179,6 +232,7 @@ class AudioPlayerManager: ObservableObject {
         currentTime = 0
         duration = 0
         lastFirestoreSync = nil
+        cancelSleepTimer()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
     
@@ -434,6 +488,122 @@ class AudioPlayerManager: ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
     
+    // MARK: - Interruption Handling
+    // When a phone call / Siri / another audio app preempts us, iOS posts
+    // .began (we mirror to isPlaying=false so UI stays accurate) and later
+    // .ended. The .shouldResume option means iOS thinks it's safe to pick
+    // back up — honor it so a shiur survives a phone call.
+    private func setupInterruptionHandling() {
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                self?.handleInterruption(notification)
+            }
+        }
+    }
+
+    private func handleInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+        switch type {
+        case .began:
+            isPlaying = false
+            updateNowPlayingInfo()
+        case .ended:
+            guard let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt else { return }
+            let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+            if options.contains(.shouldResume) && player != nil {
+                try? AVAudioSession.sharedInstance().setActive(true)
+                play()
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    // MARK: - Route Change Handling
+    // Pause when the user pulls out headphones / disconnects AirPods so the
+    // shiur doesn't start blasting through the speaker mid-sentence.
+    private func setupRouteChangeHandling() {
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            Task { @MainActor in
+                self?.handleRouteChange(notification)
+            }
+        }
+    }
+
+    private func handleRouteChange(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
+
+        if reason == .oldDeviceUnavailable, isPlaying {
+            pause()
+        }
+    }
+
+    // MARK: - Sleep Timer
+    func setSleepTimer(_ mode: SleepTimerMode) {
+        cancelSleepTimer()
+        sleepTimerMode = mode
+
+        switch mode {
+        case .off:
+            sleepTimerRemaining = nil
+        case .minutes(let minutes):
+            startCountdownTimer(seconds: TimeInterval(minutes * 60))
+        case .endOfShiur:
+            // No countdown — the existing time observer checks this each tick.
+            sleepTimerRemaining = max(duration - currentTime, 0)
+        }
+    }
+
+    func cancelSleepTimer() {
+        sleepTimer?.invalidate()
+        sleepTimer = nil
+        sleepTimerMode = .off
+        sleepTimerRemaining = nil
+    }
+
+    private func startCountdownTimer(seconds: TimeInterval) {
+        sleepTimerRemaining = seconds
+        sleepTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self = self else { return }
+                guard let remaining = self.sleepTimerRemaining else {
+                    timer.invalidate()
+                    return
+                }
+                let next = remaining - 1
+                if next <= 0 {
+                    timer.invalidate()
+                    self.sleepTimer = nil
+                    self.sleepTimerRemaining = nil
+                    self.sleepTimerMode = .off
+                    self.pause()
+                } else {
+                    self.sleepTimerRemaining = next
+                }
+            }
+        }
+    }
+
+    /// Called from the periodic time observer when in `.endOfShiur` mode so
+    /// the remaining-time label tracks position changes (seeks, speed).
+    private func tickEndOfShiurTimer() {
+        guard case .endOfShiur = sleepTimerMode else { return }
+        sleepTimerRemaining = max(duration - currentTime, 0)
+    }
+
     // MARK: - URL Processing
     private func processAudioUrl(_ url: String) -> String {
         // Handle Google Drive URLs
