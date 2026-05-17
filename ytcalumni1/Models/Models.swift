@@ -1,6 +1,45 @@
 import Foundation
 import FirebaseFirestore
 
+// MARK: - Expiry helper
+// Mirrors lib/expiry.ts on the website: admin sets `hideAfterDays` and the
+// service captures `timerStartAt` on first save. Item hides when now >=
+// timerStartAt + hideAfterDays.
+enum Expiry {
+    private static let dayMs: Double = 24 * 60 * 60 * 1000
+
+    // JS `new Date().toISOString()` always includes fractional seconds
+    // ("...T15:14:52.123Z"), but be defensive and accept either format.
+    private static let isoWithMs: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoNoMs = ISO8601DateFormatter()
+
+    private static func parseISO(_ s: String) -> Date? {
+        isoWithMs.date(from: s) ?? isoNoMs.date(from: s)
+    }
+
+    static func expiryAt(hideAfterDays: Int?, timerStartAt: String?) -> Double? {
+        guard let days = hideAfterDays, days > 0,
+              let startStr = timerStartAt,
+              let startDate = parseISO(startStr) else { return nil }
+        return startDate.timeIntervalSince1970 * 1000 + Double(days) * dayMs
+    }
+
+    static func isExpired(hideAfterDays: Int?, timerStartAt: String?, now: Double = Date().timeIntervalSince1970 * 1000) -> Bool {
+        guard let expiresAt = expiryAt(hideAfterDays: hideAfterDays, timerStartAt: timerStartAt) else { return false }
+        return now >= expiresAt
+    }
+
+    static func isExpired(_ data: [String: Any], now: Double = Date().timeIntervalSince1970 * 1000) -> Bool {
+        let days = data["hideAfterDays"] as? Int
+        let start = data["timerStartAt"] as? String
+        return isExpired(hideAfterDays: days, timerStartAt: start, now: now)
+    }
+}
+
 // MARK: - Shiur Model
 struct Shiur: Identifiable, Hashable, Codable {
     var id: String?
@@ -82,6 +121,12 @@ struct Event: Identifiable, Hashable {
     let time: String?
     let imageUrl: String?
     let description: String?
+    let hideAfterDays: Int?
+    let timerStartAt: String?
+
+    var isExpired: Bool {
+        Expiry.isExpired(hideAfterDays: hideAfterDays, timerStartAt: timerStartAt)
+    }
     
     var formattedDate: String {
         let inputFormatter = DateFormatter()
@@ -141,6 +186,8 @@ struct Event: Identifiable, Hashable {
         self.time = data["time"] as? String
         self.imageUrl = data["imageUrl"] as? String
         self.description = data["description"] as? String
+        self.hideAfterDays = data["hideAfterDays"] as? Int
+        self.timerStartAt = data["timerStartAt"] as? String
     }
 }
 
@@ -152,20 +199,28 @@ struct Announcement: Identifiable, Hashable {
     let type: String  // "mazel_tov" or "announcement"
     let date: String
     let enabled: Bool
-    
+    let hideAfterDays: Int?
+    let timerStartAt: String?
+
     var isMazelTov: Bool {
         type == "mazel_tov"
     }
-    
+
+    var isExpired: Bool {
+        Expiry.isExpired(hideAfterDays: hideAfterDays, timerStartAt: timerStartAt)
+    }
+
     init?(document: DocumentSnapshot) {
         guard let data = document.data() else { return nil }
-        
+
         self.id = document.documentID
         self.title = data["title"] as? String ?? ""
         self.content = data["content"] as? String ?? ""
         self.type = data["type"] as? String ?? "announcement"
         self.date = data["date"] as? String ?? ""
         self.enabled = data["enabled"] as? Bool ?? false
+        self.hideAfterDays = data["hideAfterDays"] as? Int
+        self.timerStartAt = data["timerStartAt"] as? String
     }
 }
 
@@ -175,14 +230,18 @@ struct CarouselImage: Identifiable, Hashable {
     let url: String
     let caption: String?
     let order: Int
-    
+    let enabled: Bool
+
     init?(document: DocumentSnapshot) {
         guard let data = document.data() else { return nil }
-        
+
         self.id = document.documentID
         self.url = data["url"] as? String ?? ""
         self.caption = data["caption"] as? String
         self.order = data["order"] as? Int ?? 0
+        // Treat missing `enabled` as enabled (back-compat with images created
+        // before the toggle existed — matches website behavior).
+        self.enabled = (data["enabled"] as? Bool) ?? true
     }
 }
 
@@ -256,22 +315,55 @@ struct ShiurCollection: Identifiable {
     let description: String
     let isActive: Bool
     let shiurIds: [String]?
-    
-    init(id: String?, name: String, description: String, isActive: Bool, shiurIds: [String]?) {
+    let hideAfterDays: Int?
+    let timerStartAt: String?
+
+    var isExpired: Bool {
+        Expiry.isExpired(hideAfterDays: hideAfterDays, timerStartAt: timerStartAt)
+    }
+
+    init(id: String?, name: String, description: String, isActive: Bool, shiurIds: [String]?, hideAfterDays: Int? = nil, timerStartAt: String? = nil) {
         self.id = id
         self.name = name
         self.description = description
         self.isActive = isActive
         self.shiurIds = shiurIds
+        self.hideAfterDays = hideAfterDays
+        self.timerStartAt = timerStartAt
     }
-    
+
     init?(document: DocumentSnapshot) {
         guard let data = document.data() else { return nil }
-        
+
         self.id = document.documentID
         self.name = data["name"] as? String ?? ""
         self.description = data["description"] as? String ?? ""
         self.isActive = data["isActive"] as? Bool ?? false
         self.shiurIds = data["shiurIds"] as? [String]
+        self.hideAfterDays = data["hideAfterDays"] as? Int
+        self.timerStartAt = data["timerStartAt"] as? String
+    }
+}
+
+// MARK: - System Announcement (settings/systemAnnouncement)
+// Site-wide banner editable from the admin settings page. Shown above the
+// Mazel Tovs & Announcements section on the home page. Respects the same
+// hideAfterDays/timerStartAt auto-hide timer as other expirable content.
+struct SystemAnnouncement {
+    let title: String
+    let message: String
+    let linkUrl: String
+    let linkText: String
+
+    init?(document: DocumentSnapshot) {
+        guard let data = document.data(),
+              let enabled = data["enabled"] as? Bool, enabled,
+              let message = data["message"] as? String, !message.isEmpty,
+              !Expiry.isExpired(data) else { return nil }
+
+        self.title = data["title"] as? String ?? ""
+        self.message = message
+        self.linkUrl = data["linkUrl"] as? String ?? ""
+        self.linkText = data["linkText"] as? String ?? ""
     }
 }

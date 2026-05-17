@@ -11,7 +11,8 @@ struct HomeView: View {
     @State private var announcements: [Announcement] = []
     @State private var upcomingEvents: [Event] = []
     @State private var mostRecentShiur: Shiur?
-    @State private var featuredShiur: Shiur?
+    @State private var featuredShiurim: [Shiur] = []
+    @State private var systemAnnouncement: SystemAnnouncement?
     @State private var alumniPhotos: [AlumniPhoto] = []
     @State private var activeCollection: ShiurCollection?
     @State private var isLoading = true
@@ -32,6 +33,11 @@ struct HomeView: View {
                 
                 // Main content - wrapped in a fixed container
                 LazyVStack(alignment: .leading, spacing: 28) {
+                    // System Announcement banner (site-wide notice from admin)
+                    if let banner = systemAnnouncement {
+                        SystemAnnouncementBanner(announcement: banner)
+                    }
+
                     // Announcements
                     if !announcements.isEmpty {
                         VStack(alignment: .leading, spacing: 16) {
@@ -63,13 +69,20 @@ struct HomeView: View {
                         collectionSection(collection)
                     }
                     
-                    // Featured/Most Recent Shiur
-                    if let featured = featuredShiur {
-                        shiurSection(featured, isFeatured: true)
+                    // Featured Shiurim (up to 5, set by admin in site settings)
+                    if !featuredShiurim.isEmpty {
+                        let title = featuredShiurim.count == 1 ? "Featured Shiur" : "Featured Shiurim"
+                        VStack(alignment: .leading, spacing: 16) {
+                            SectionHeader(title: title, icon: "headphones")
+                            ForEach(featuredShiurim) { featured in
+                                shiurCard(featured)
+                            }
+                        }
                     }
-                    
-                    // Show most recent if it's different from featured (or no featured)
-                    if let recent = mostRecentShiur, recent.id != featuredShiur?.id {
+
+                    // Show most recent if it's not already in the featured list
+                    if let recent = mostRecentShiur,
+                       !featuredShiurim.contains(where: { $0.id == recent.id }) {
                         shiurSection(recent, isFeatured: false)
                     }
                     
@@ -157,6 +170,69 @@ struct HomeView: View {
                 endPoint: .bottom
             )
             
+            // Carousel prev/next arrows + dot indicators (only when >1 image).
+            // Wrapped in a full-height VStack so arrows are vertically centered
+            // (the parent ZStack has .bottom alignment, which would otherwise
+            // pin them to the bottom).
+            if carouselImages.count > 1 {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                currentCarouselIndex = (currentCarouselIndex - 1 + carouselImages.count) % carouselImages.count
+                            }
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                                .background(Color.navy.opacity(0.5))
+                                .clipShape(Circle())
+                        }
+                        .padding(.leading, 12)
+
+                        Spacer()
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                currentCarouselIndex = (currentCarouselIndex + 1) % carouselImages.count
+                            }
+                        } label: {
+                            Image(systemName: "chevron.right")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 36, height: 36)
+                                .background(Color.navy.opacity(0.5))
+                                .clipShape(Circle())
+                        }
+                        .padding(.trailing, 12)
+                    }
+                    Spacer()
+                }
+                .frame(maxHeight: .infinity)
+
+                // Dot indicators centered along the bottom, above the title.
+                HStack(spacing: 6) {
+                    ForEach(0..<carouselImages.count, id: \.self) { index in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                currentCarouselIndex = index
+                            }
+                        } label: {
+                            Capsule()
+                                .fill(index == currentCarouselIndex ? Color.gold : Color.white.opacity(0.5))
+                                .frame(width: index == currentCarouselIndex ? 18 : 6, height: 6)
+                        }
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.navy.opacity(0.4))
+                .clipShape(Capsule())
+                .padding(.bottom, 8)
+            }
+
             // Profile menu button in top right
             VStack {
                 HStack {
@@ -306,9 +382,14 @@ struct HomeView: View {
                 title: isFeatured ? "Featured Shiur" : "Most Recent Shiur",
                 icon: "headphones"
             )
-            
-            // Inline shiur card with full-width play button
-            VStack(alignment: .leading, spacing: 16) {
+            shiurCard(shiur)
+        }
+    }
+
+    // Card body for a single shiur (no section header). Used by the
+    // multi-featured loop, which shows one header above several cards.
+    private func shiurCard(_ shiur: Shiur) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
                 // Title and Rebbe
                 VStack(alignment: .leading, spacing: 6) {
                     Text(shiur.title)
@@ -407,11 +488,11 @@ struct HomeView: View {
                     .cornerRadius(10)
                 }
             }
-            .padding(20)
-            .cardStyle()
         }
+        .padding(20)
+        .cardStyle()
     }
-    
+
     // MARK: - Alumni Spotlight Section
     private var alumniSpotlightSection: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -437,17 +518,23 @@ struct HomeView: View {
         do {
             // Load all data
             carouselImages = try await FirebaseService.shared.fetchCarouselImages()
+            // Match website: start on a random image so visitors don't always
+            // see the same one first.
+            if !carouselImages.isEmpty {
+                currentCarouselIndex = Int.random(in: 0..<carouselImages.count)
+            }
             announcements = try await FirebaseService.shared.fetchAnnouncements()
             upcomingEvents = try await FirebaseService.shared.fetchUpcomingEvents()
             mostRecentShiur = try await FirebaseService.shared.fetchMostRecentShiur()
-            featuredShiur = try await FirebaseService.shared.fetchFeaturedShiur()
+            featuredShiurim = try await FirebaseService.shared.fetchFeaturedShiurim()
+            systemAnnouncement = try await FirebaseService.shared.fetchSystemAnnouncement()
             alumniPhotos = try await FirebaseService.shared.fetchAlumniPhotos()
             activeCollection = try await FirebaseService.shared.fetchActiveCollection()
-            
+
             // Load playback positions from Firebase
             await loadPlaybackPositions()
-            
-            print("✅ Loaded: \(carouselImages.count) carousel, \(announcements.count) announcements, \(upcomingEvents.count) events, shiur: \(mostRecentShiur?.title ?? "none"), \(alumniPhotos.count) photos")
+
+            print("✅ Loaded: \(carouselImages.count) carousel, \(announcements.count) announcements, \(upcomingEvents.count) events, shiur: \(mostRecentShiur?.title ?? "none"), \(featuredShiurim.count) featured, \(alumniPhotos.count) photos")
         } catch {
             print("❌ Error loading home data: \(error)")
         }
@@ -502,6 +589,51 @@ struct HomeView: View {
 }
 
 // MARK: - Supporting Views
+
+// Site-wide announcement banner controlled from the admin settings page
+// (settings/systemAnnouncement). Rendered above Mazel Tovs & Announcements.
+struct SystemAnnouncementBanner: View {
+    let announcement: SystemAnnouncement
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Gold top accent stripe to match the website's banner styling
+            Rectangle()
+                .fill(LinearGradient(colors: [.gold, .gold.opacity(0.7), .gold], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 3)
+
+            VStack(alignment: .leading, spacing: 10) {
+                if !announcement.title.isEmpty {
+                    Text(announcement.title)
+                        .font(.system(size: 18, weight: .bold, design: .serif))
+                        .foregroundColor(.navy)
+                }
+
+                Text(announcement.message)
+                    .font(.body)
+                    .foregroundColor(.navy.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !announcement.linkUrl.isEmpty, let url = URL(string: announcement.linkUrl) {
+                    Link(destination: url) {
+                        HStack(spacing: 4) {
+                            Text(announcement.linkText.isEmpty ? "Learn more" : announcement.linkText)
+                                .font(.subheadline.weight(.semibold))
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .foregroundColor(.gold)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .background(Color.white)
+        .cornerRadius(12)
+        .shadow(color: Color.black.opacity(0.08), radius: 10, x: 0, y: 4)
+    }
+}
+
 struct SectionHeader: View {
     let title: String
     let icon: String

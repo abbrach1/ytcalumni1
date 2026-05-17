@@ -87,38 +87,49 @@ class FirebaseService: ObservableObject {
         let snapshot = try await db.collection("events")
             .order(by: "date", descending: false)
             .getDocuments()
-        
-        return snapshot.documents.compactMap { Event(document: $0) }
+
+        return snapshot.documents
+            .compactMap { Event(document: $0) }
+            .filter { !$0.isExpired }
     }
-    
+
     func fetchUpcomingEvents(limit eventLimit: Int = 3) async throws -> [Event] {
         let today = formatDateString(Date())
-        
+
+        // Over-fetch so we can drop expired items and still hit eventLimit.
         let snapshot = try await db.collection("events")
             .whereField("date", isGreaterThanOrEqualTo: today)
             .order(by: "date", descending: false)
-            .limit(to: eventLimit)
+            .limit(to: eventLimit * 3)
             .getDocuments()
-        
-        return snapshot.documents.compactMap { Event(document: $0) }
+
+        return snapshot.documents
+            .compactMap { Event(document: $0) }
+            .filter { !$0.isExpired }
+            .prefix(eventLimit)
+            .map { $0 }
     }
-    
+
     // MARK: - Announcements
     func fetchAnnouncements() async throws -> [Announcement] {
         let snapshot = try await db.collection("announcements")
             .whereField("enabled", isEqualTo: true)
             .order(by: "date", descending: true)
             .getDocuments()
-        
-        return snapshot.documents.compactMap { Announcement(document: $0) }
+
+        return snapshot.documents
+            .compactMap { Announcement(document: $0) }
+            .filter { !$0.isExpired }
     }
-    
+
     // MARK: - Carousel Images
     func fetchCarouselImages() async throws -> [CarouselImage] {
         let snapshot = try await db.collection("carouselImages")
             .getDocuments()
-        
-        let images = snapshot.documents.compactMap { CarouselImage(document: $0) }
+
+        let images = snapshot.documents
+            .compactMap { CarouselImage(document: $0) }
+            .filter { $0.enabled }
         return images.sorted { $0.order < $1.order }
     }
     
@@ -154,27 +165,60 @@ class FirebaseService: ObservableObject {
     func fetchActiveCollection() async throws -> ShiurCollection? {
         let snapshot = try await db.collection("shiurCollections")
             .getDocuments()
-        
+
         for doc in snapshot.documents {
-            if let collection = ShiurCollection(document: doc), collection.isActive {
+            if let collection = ShiurCollection(document: doc),
+               collection.isActive,
+               !collection.isExpired {
                 return collection
             }
         }
         return nil
     }
-    
-    // MARK: - Featured Shiur
-    func fetchFeaturedShiur() async throws -> Shiur? {
+
+    // MARK: - Featured Shiurim
+    // settings/featuredShiur now stores `shiurIds: [String]` (up to 5). Falls
+    // back to the legacy single `shiurId: String` for back-compat with the
+    // pre-migration document shape.
+    func fetchFeaturedShiurim() async throws -> [Shiur] {
         let settingsDoc = try await db.collection("settings").document("featuredShiur").getDocument()
-        
+
         guard let data = settingsDoc.data(),
-              let enabled = data["enabled"] as? Bool, enabled,
-              let shiurId = data["shiurId"] as? String else {
-            return nil
+              let enabled = data["enabled"] as? Bool, enabled else {
+            return []
         }
-        
-        let shiurDoc = try await db.collection("shiurim").document(shiurId).getDocument()
-        return Shiur(document: shiurDoc)
+
+        let ids: [String]
+        if let arr = data["shiurIds"] as? [String], !arr.isEmpty {
+            ids = arr.filter { !$0.isEmpty }
+        } else if let legacy = data["shiurId"] as? String, !legacy.isEmpty {
+            ids = [legacy]
+        } else {
+            ids = []
+        }
+        guard !ids.isEmpty else { return [] }
+
+        let shiurim = try await withThrowingTaskGroup(of: (Int, Shiur?).self) { group -> [Shiur] in
+            for (index, id) in ids.enumerated() {
+                group.addTask {
+                    let doc = try await self.db.collection("shiurim").document(id).getDocument()
+                    return (index, Shiur(document: doc))
+                }
+            }
+            var results: [(Int, Shiur)] = []
+            for try await (index, shiur) in group {
+                if let shiur = shiur { results.append((index, shiur)) }
+            }
+            return results.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
+
+        return shiurim
+    }
+
+    // MARK: - System Announcement (site-wide banner)
+    func fetchSystemAnnouncement() async throws -> SystemAnnouncement? {
+        let doc = try await db.collection("settings").document("systemAnnouncement").getDocument()
+        return SystemAnnouncement(document: doc)
     }
     
     // MARK: - Submissions
