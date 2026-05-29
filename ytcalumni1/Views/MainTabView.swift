@@ -3,7 +3,10 @@ import SwiftUI
 struct MainTabView: View {
     @EnvironmentObject var authManager: AuthManager
     @State private var selectedTab = 0
-    @StateObject private var audioPlayer = AudioPlayerManager()
+    // Use the single app-level instance (injected in YTCAlumniApp). Creating a
+    // second @StateObject here spawned a duplicate manager that double-registered
+    // remote-command/interruption handlers on the process-wide singletons.
+    @EnvironmentObject var audioPlayer: AudioPlayerManager
     @ObservedObject private var firebase = FirebaseService.shared
 
     var body: some View {
@@ -59,7 +62,6 @@ struct MainTabView: View {
             }
         }
         .animation(.easeInOut, value: firebase.isOfflineFallback)
-        .environmentObject(audioPlayer)
     }
 }
 
@@ -81,4 +83,5 @@ private struct OfflineBanner: View {
 #Preview {
     MainTabView()
         .environmentObject(AuthManager())
+        .environmentObject(AudioPlayerManager())
 }

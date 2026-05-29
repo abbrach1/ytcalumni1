@@ -106,9 +106,9 @@ struct ShiurimView: View {
         case .dateAscending:
             result.sort { $0.date < $1.date }
         case .titleAZ:
-            result.sort { $0.title < $1.title }
+            result.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         case .rebbeAZ:
-            result.sort { $0.rebbe < $1.rebbe }
+            result.sort { $0.rebbe.localizedCaseInsensitiveCompare($1.rebbe) == .orderedAscending }
         }
         
         return result

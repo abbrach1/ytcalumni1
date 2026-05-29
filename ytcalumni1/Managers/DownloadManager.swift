@@ -52,6 +52,8 @@ final class DownloadManager: NSObject, ObservableObject {
     private var shiurIdByTask: [Int: String] = [:]
     /// Cached metadata for an in-flight task so the manifest entry can be
     /// written when the task completes (the delegate only gets a URL + task).
+    /// Persisted to `pending.json` so a background download that finishes while
+    /// the app is killed can still be matched to its Shiur after relaunch.
     private var pendingShiurs: [String: Shiur] = [:]
 
     /// Set by the AppDelegate when iOS resumes the app to deliver background
@@ -62,9 +64,24 @@ final class DownloadManager: NSObject, ObservableObject {
         super.init()
         ensureDownloadsDirectoryExists()
         loadManifest()
-        // Touch the session so the delegate is wired up at launch and any
-        // in-flight tasks (started before a kill) re-emit their completion.
-        _ = session
+        loadPendingManifest()
+        reconcileManifest()
+        // Re-attach to any background tasks still running after a relaunch so
+        // the UI shows in-progress state, cancel works, and we don't start a
+        // duplicate download. Touching `session` also wires up the delegate so
+        // in-flight tasks re-emit their completion.
+        session.getAllTasks { tasks in
+            Task { @MainActor in
+                for case let task as URLSessionDownloadTask in tasks {
+                    guard let shiurId = task.taskDescription else { continue }
+                    self.tasksByShiurId[shiurId] = task
+                    self.shiurIdByTask[task.taskIdentifier] = shiurId
+                    if self.states[shiurId] == nil {
+                        self.states[shiurId] = .downloading(progress: 0)
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Public API
@@ -79,17 +96,14 @@ final class DownloadManager: NSObject, ObservableObject {
     }
 
     /// Returns the local file URL for a downloaded shiur, or nil if missing.
-    /// Verifies the file is still on disk — a manifest entry without a file
-    /// (rare, e.g. user cleared storage) is dropped here.
+    /// Read-only: a transient false-negative fileExists check must NOT prune
+    /// the manifest entry (that would permanently drop the entry + its metadata
+    /// on a single filesystem hiccup). Pruning happens only at launch in
+    /// reconcileManifest() and via deleteDownload().
     func localURL(for shiurId: String) -> URL? {
         guard let entry = downloads[shiurId] else { return nil }
         let url = downloadsDirectory.appendingPathComponent(entry.fileName)
-        if FileManager.default.fileExists(atPath: url.path) {
-            return url
-        }
-        downloads.removeValue(forKey: shiurId)
-        saveManifest()
-        return nil
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     func download(_ shiur: Shiur) {
@@ -105,6 +119,7 @@ final class DownloadManager: NSObject, ObservableObject {
         tasksByShiurId[shiurId] = task
         shiurIdByTask[task.taskIdentifier] = shiurId
         pendingShiurs[shiurId] = shiur
+        savePendingManifest()
         states[shiurId] = .downloading(progress: 0)
         task.resume()
     }
@@ -116,6 +131,7 @@ final class DownloadManager: NSObject, ObservableObject {
             shiurIdByTask.removeValue(forKey: task.taskIdentifier)
         }
         pendingShiurs.removeValue(forKey: shiurId)
+        savePendingManifest()
         states[shiurId] = .idle
     }
 
@@ -147,6 +163,10 @@ final class DownloadManager: NSObject, ObservableObject {
 
     private var manifestURL: URL {
         downloadsDirectory.appendingPathComponent("manifest.json")
+    }
+
+    private var pendingManifestURL: URL {
+        downloadsDirectory.appendingPathComponent("pending.json")
     }
 
     private func ensureDownloadsDirectoryExists() {
@@ -185,6 +205,43 @@ final class DownloadManager: NSObject, ObservableObject {
         } catch {
             print("[downloads] Failed to save manifest: \(error)")
         }
+    }
+
+    /// Persisted in-flight metadata. Without this, a background download that
+    /// completes while the app is killed has no Shiur to attach on relaunch,
+    /// and the completed file was previously discarded.
+    private func savePendingManifest() {
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(Array(pendingShiurs.values))
+            try data.write(to: pendingManifestURL, options: .atomic)
+        } catch {
+            print("[downloads] Failed to save pending manifest: \(error)")
+        }
+    }
+
+    private func loadPendingManifest() {
+        guard let data = try? Data(contentsOf: pendingManifestURL) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let shiurs = try? decoder.decode([Shiur].self, from: data) {
+            pendingShiurs = Dictionary(uniqueKeysWithValues: shiurs.compactMap { s in s.id.map { ($0, s) } })
+        }
+    }
+
+    /// Drops manifest entries whose backing file is gone. Skips entirely if the
+    /// Downloads directory itself isn't reachable, so a transient outage (e.g.
+    /// mid-restore from backup) never prunes valid entries.
+    private func reconcileManifest() {
+        let dir = downloadsDirectory
+        guard FileManager.default.fileExists(atPath: dir.path) else { return }
+        let missing = downloads.filter {
+            !FileManager.default.fileExists(atPath: dir.appendingPathComponent($0.value.fileName).path)
+        }
+        guard !missing.isEmpty else { return }
+        for id in missing.keys { downloads.removeValue(forKey: id) }
+        saveManifest()
     }
 
     // MARK: - URL processing (matches AudioPlayerManager so downloads use
@@ -254,6 +311,32 @@ extension DownloadManager: URLSessionDownloadDelegate {
         let taskId = downloadTask.taskIdentifier
         let descriptionId = downloadTask.taskDescription
 
+        // Validate the HTTP response BEFORE recording success. Google Drive
+        // serves a virus-scan/confirmation page (HTTP 200, Content-Type
+        // text/html) for large files; that HTML must never be saved as audio
+        // (it would "succeed", then fail to play and suppress the network path).
+        let http = downloadTask.response as? HTTPURLResponse
+        let statusOK = http.map { (200..<300).contains($0.statusCode) } ?? true
+        let contentType = (http?.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        let looksLikeHTML = contentType.contains("text/html")
+
+        guard statusOK, !looksLikeHTML else {
+            let status = http?.statusCode ?? -1
+            // Don't move the temp file — letting this delegate return deletes it.
+            Task { @MainActor in
+                let shiurId = self.shiurIdByTask[taskId] ?? descriptionId
+                guard let shiurId = shiurId else { return }
+                self.tasksByShiurId.removeValue(forKey: shiurId)
+                self.shiurIdByTask.removeValue(forKey: taskId)
+                self.pendingShiurs.removeValue(forKey: shiurId)
+                self.savePendingManifest()
+                self.states[shiurId] = .failed(
+                    looksLikeHTML ? "Source returned a web page, not audio" : "Download failed (HTTP \(status))"
+                )
+            }
+            return
+        }
+
         // Resolve where to put the file. Doing this off-actor — only touches
         // filesystem APIs, not @Published state.
         let fm = FileManager.default
@@ -278,6 +361,13 @@ extension DownloadManager: URLSessionDownloadDelegate {
         var sizeBytes: Int64 = 0
         do {
             try fm.moveItem(at: location, to: destination)
+            // Reproducible content — keep out of iCloud/iTunes backups. The
+            // per-directory exclusion doesn't propagate to files created later,
+            // so set it per file here.
+            var dest = destination
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try? dest.setResourceValues(values)
             let attrs = try fm.attributesOfItem(atPath: destination.path)
             sizeBytes = (attrs[.size] as? Int64) ?? 0
         } catch {
@@ -293,11 +383,16 @@ extension DownloadManager: URLSessionDownloadDelegate {
             if let moveError = moveError {
                 self.states[shiurId] = .failed(moveError.localizedDescription)
                 self.pendingShiurs.removeValue(forKey: shiurId)
+                self.savePendingManifest()
                 return
             }
 
-            if let shiur = self.pendingShiurs.removeValue(forKey: shiurId)
-                ?? self.downloads[shiurId]?.shiur {
+            // `wasPending` distinguishes a genuinely new, user-initiated
+            // download (count it in analytics) from a background replay.
+            let wasPending = self.pendingShiurs.removeValue(forKey: shiurId)
+            self.savePendingManifest()
+
+            if let shiur = wasPending ?? self.downloads[shiurId]?.shiur {
                 let entry = DownloadedShiur(
                     shiur: shiur,
                     fileName: fileName,
@@ -307,10 +402,36 @@ extension DownloadManager: URLSessionDownloadDelegate {
                 self.downloads[shiurId] = entry
                 self.states[shiurId] = .downloaded
                 self.saveManifest()
+                if wasPending != nil {
+                    Task { await AnalyticsService.shared.trackDownload(shiurId: shiurId) }
+                }
             } else {
-                // No metadata available (shouldn't happen — be defensive).
-                self.states[shiurId] = .failed("Missing metadata")
-                try? FileManager.default.removeItem(at: destination)
+                // Metadata unavailable (very rare now that pending is persisted).
+                // NEVER delete the completed file — record a minimal entry so it
+                // stays playable; metadata can be refreshed on a later download.
+                let placeholder = Shiur(
+                    id: shiurId,
+                    title: "Downloaded Shiur",
+                    rebbe: "",
+                    date: "",
+                    tags: [],
+                    audioUrl: nil,
+                    pdfUrl: nil,
+                    description: nil,
+                    playCount: nil,
+                    downloadCount: nil,
+                    series: nil
+                )
+                let entry = DownloadedShiur(
+                    shiur: placeholder,
+                    fileName: fileName,
+                    downloadedAt: Date(),
+                    sizeBytes: sizeBytes
+                )
+                self.downloads[shiurId] = entry
+                self.states[shiurId] = .downloaded
+                self.saveManifest()
+                print("[downloads] Completed \(shiurId) with missing metadata; saved minimal entry, retained file \(fileName)")
             }
         }
     }
@@ -329,6 +450,7 @@ extension DownloadManager: URLSessionDownloadDelegate {
             self.tasksByShiurId.removeValue(forKey: shiurId)
             self.shiurIdByTask.removeValue(forKey: taskId)
             self.pendingShiurs.removeValue(forKey: shiurId)
+            self.savePendingManifest()
             // Cancellation already cleared state to .idle in cancelDownload;
             // don't overwrite it with a "failed" label.
             if case .downloading = self.states[shiurId] ?? .idle {

@@ -15,6 +15,7 @@ struct HomeView: View {
     @State private var systemAnnouncement: SystemAnnouncement?
     @State private var alumniPhotos: [AlumniPhoto] = []
     @State private var activeCollection: ShiurCollection?
+    @State private var fundraiserCampaign: FundraiserCampaign?
     @State private var isLoading = true
     @State private var currentCarouselIndex = 0
     @State private var selectedPhoto: AlumniPhoto?
@@ -34,6 +35,11 @@ struct HomeView: View {
                 
                 // Main content - wrapped in a fixed container
                 LazyVStack(alignment: .leading, spacing: 28) {
+                    // Fundraiser campaign CTA (admin-toggled via settings/fundraiserCampaign)
+                    if let campaign = fundraiserCampaign {
+                        CampaignBanner(campaign: campaign)
+                    }
+
                     // System Announcement banner (site-wide notice from admin)
                     if let banner = systemAnnouncement {
                         SystemAnnouncementBanner(announcement: banner)
@@ -497,7 +503,6 @@ struct HomeView: View {
                     .cornerRadius(10)
                 }
             }
-        }
         .padding(20)
         .cardStyle()
     }
@@ -539,6 +544,7 @@ struct HomeView: View {
             systemAnnouncement = try await FirebaseService.shared.fetchSystemAnnouncement()
             alumniPhotos = try await FirebaseService.shared.fetchAlumniPhotos()
             activeCollection = try await FirebaseService.shared.fetchActiveCollection()
+            fundraiserCampaign = try await FirebaseService.shared.fetchFundraiserCampaign()
 
             // Load playback positions from Firebase
             await loadPlaybackPositions()

@@ -124,6 +124,12 @@ struct YTCAlumniApp: App {
                     // the website while the app was in the background.
                     Task { await NotificationManager.shared.syncPushTopicsFromSubscription() }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                    // Flush the latest playback position to Firestore (under a
+                    // background task) before iOS suspends us, so cross-device
+                    // resume isn't stale by up to the 10s sync interval.
+                    audioPlayer.flushPlaybackPosition()
+                }
         }
     }
 }

@@ -104,8 +104,10 @@ struct Shiur: Identifiable, Hashable, Codable {
         self.audioUrl = data["audioUrl"] as? String
         self.pdfUrl = data["pdfUrl"] as? String
         self.description = data["description"] as? String
-        self.playCount = data["playCount"] as? Int
-        self.downloadCount = data["downloadCount"] as? Int
+        // Firestore bridges numbers to NSNumber; decode via NSNumber so a
+        // count stored as a Double (vs Int) doesn't silently become nil.
+        self.playCount = (data["playCount"] as? NSNumber)?.intValue
+        self.downloadCount = (data["downloadCount"] as? NSNumber)?.intValue
         self.series = data["series"] as? String
     }
 }
@@ -365,5 +367,39 @@ struct SystemAnnouncement {
         self.message = message
         self.linkUrl = data["linkUrl"] as? String ?? ""
         self.linkText = data["linkText"] as? String ?? ""
+    }
+}
+
+// MARK: - Fundraiser Campaign (settings/fundraiserCampaign)
+// Admin-toggled alumni fundraiser. Mirrors the website's home-page CTA: when
+// `enabled`, the app shows a "Create Your Page" banner whose form writes to the
+// `campaignSignups` collection and emails the office. Returns nil (so the banner
+// hides) when the campaign is disabled or the doc doesn't exist.
+struct FundraiserCampaign {
+    let campaignName: String
+    let campaignUrl: String
+    let headline: String
+    let description: String
+    let deadline: String?   // yyyy-MM-dd
+
+    var formattedDeadline: String? {
+        guard let deadline = deadline, !deadline.isEmpty else { return nil }
+        let inputFormatter = DateFormatter()
+        inputFormatter.dateFormat = "yyyy-MM-dd"
+        guard let date = inputFormatter.date(from: deadline) else { return nil }
+        let out = DateFormatter()
+        out.dateFormat = "MMMM d, yyyy"
+        return out.string(from: date)
+    }
+
+    init?(document: DocumentSnapshot) {
+        guard let data = document.data(),
+              let enabled = data["enabled"] as? Bool, enabled else { return nil }
+        self.campaignName = data["campaignName"] as? String ?? ""
+        self.campaignUrl = data["campaignUrl"] as? String ?? ""
+        let headline = data["headline"] as? String ?? ""
+        self.headline = headline.isEmpty ? "Be Part of Our Campaign" : headline
+        self.description = data["description"] as? String ?? ""
+        self.deadline = data["deadline"] as? String
     }
 }
