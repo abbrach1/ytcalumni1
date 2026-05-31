@@ -381,6 +381,8 @@ struct FundraiserCampaign {
     let headline: String
     let description: String
     let deadline: String?   // yyyy-MM-dd
+    let defaultGoal: String
+    let defaultMessage: String
 
     var formattedDeadline: String? {
         guard let deadline = deadline, !deadline.isEmpty else { return nil }
@@ -401,5 +403,8 @@ struct FundraiserCampaign {
         self.headline = headline.isEmpty ? "Be Part of Our Campaign" : headline
         self.description = data["description"] as? String ?? ""
         self.deadline = data["deadline"] as? String
+        let goal = data["defaultGoal"] as? String ?? ""
+        self.defaultGoal = goal.isEmpty ? "$1,800" : goal
+        self.defaultMessage = data["defaultMessage"] as? String ?? ""
     }
 }

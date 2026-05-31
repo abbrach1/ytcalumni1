@@ -67,8 +67,15 @@ struct CampaignFormView: View {
     @State private var email = ""
     @State private var phone = ""
     @State private var pageTitle = ""
-    @State private var goalAmount = "$1,800"
+    @State private var goalAmount = ""
     @State private var message = ""
+
+    init(campaign: FundraiserCampaign) {
+        self.campaign = campaign
+        // Pre-fill the goal + message from the admin-configured defaults.
+        _goalAmount = State(initialValue: campaign.defaultGoal)
+        _message = State(initialValue: campaign.defaultMessage)
+    }
 
     @State private var isSubmitting = false
     @State private var submitted = false
