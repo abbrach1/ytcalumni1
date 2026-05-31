@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseAuth
 
 // In-app branded feedback form. Posts to /api/send-feedback on the website,
 // which delivers the email to ADMIN_EMAIL via Resend.
