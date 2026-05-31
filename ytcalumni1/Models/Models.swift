@@ -383,6 +383,7 @@ struct FundraiserCampaign {
     let deadline: String?   // yyyy-MM-dd
     let defaultGoal: String
     let defaultMessage: String
+    let showLinkOnSubmit: Bool   // show "Visit the Campaign" on the success screen
 
     var formattedDeadline: String? {
         guard let deadline = deadline, !deadline.isEmpty else { return nil }
@@ -406,5 +407,7 @@ struct FundraiserCampaign {
         let goal = data["defaultGoal"] as? String ?? ""
         self.defaultGoal = goal.isEmpty ? "$1,800" : goal
         self.defaultMessage = data["defaultMessage"] as? String ?? ""
+        // Defaults true so the link keeps showing on existing campaigns until an admin turns it off.
+        self.showLinkOnSubmit = data["showLinkOnSubmit"] as? Bool ?? true
     }
 }

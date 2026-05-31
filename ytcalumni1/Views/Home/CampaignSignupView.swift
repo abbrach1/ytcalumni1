@@ -9,6 +9,8 @@ import FirebaseAuth
 struct CampaignBanner: View {
     let campaign: FundraiserCampaign
     @State private var showForm = false
+    @State private var alreadySubmitted = false
+    @State private var showResubmitConfirm = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -37,7 +39,7 @@ struct CampaignBanner: View {
                     .foregroundColor(.cream.opacity(0.6))
             }
 
-            Button(action: { showForm = true }) {
+            Button(action: handleCreateTap) {
                 Text("Create Your Page")
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(.navy)
@@ -56,6 +58,32 @@ struct CampaignBanner: View {
         .sheet(isPresented: $showForm) {
             CampaignFormView(campaign: campaign)
         }
+        .task { await checkAlreadySubmitted() }
+        .confirmationDialog(
+            "You've already created a page",
+            isPresented: $showResubmitConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Create Another") { showForm = true }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to create another fundraising page?")
+        }
+    }
+
+    // Tapping "Create Your Page": if they've already created one, confirm first;
+    // otherwise open the form straight away.
+    private func handleCreateTap() {
+        if alreadySubmitted {
+            showResubmitConfirm = true
+        } else {
+            showForm = true
+        }
+    }
+
+    private func checkAlreadySubmitted() async {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        alreadySubmitted = await FirebaseService.shared.hasSubmittedCampaign(uid: uid)
     }
 }
 
@@ -79,8 +107,6 @@ struct CampaignFormView: View {
 
     @State private var isSubmitting = false
     @State private var submitted = false
-    @State private var alreadySubmitted = false
-    @State private var showResubmitConfirm = false
     @State private var errorMessage: String?
 
     private var canSubmit: Bool {
@@ -107,16 +133,6 @@ struct CampaignFormView: View {
                 }
             }
             .task { await prefill() }
-            .confirmationDialog(
-                "You've already created a page",
-                isPresented: $showResubmitConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Create Another") { Task { await submit() } }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Are you sure you want to create another fundraising page?")
-            }
         }
     }
 
@@ -157,7 +173,7 @@ struct CampaignFormView: View {
                         .foregroundColor(.red)
                 }
 
-                Button(action: attemptSubmit) {
+                Button(action: { Task { await submit() } }) {
                     HStack(spacing: 8) {
                         if isSubmitting {
                             ProgressView().tint(.cream)
@@ -192,7 +208,7 @@ struct CampaignFormView: View {
                 .foregroundColor(.navy.opacity(0.7))
                 .multilineTextAlignment(.center)
 
-            if !campaign.campaignUrl.isEmpty, let url = URL(string: campaign.campaignUrl) {
+            if campaign.showLinkOnSubmit, !campaign.campaignUrl.isEmpty, let url = URL(string: campaign.campaignUrl) {
                 Link(destination: url) {
                     Text("Visit the Campaign")
                         .font(.subheadline.weight(.semibold))
@@ -230,15 +246,6 @@ struct CampaignFormView: View {
         }
     }
 
-    private func attemptSubmit() {
-        guard canSubmit, !isSubmitting else { return }
-        if alreadySubmitted {
-            showResubmitConfirm = true
-        } else {
-            Task { await submit() }
-        }
-    }
-
     private func prefill() async {
         guard let user = Auth.auth().currentUser else { return }
         if email.isEmpty { email = user.email ?? "" }
@@ -249,7 +256,6 @@ struct CampaignFormView: View {
             if !info.phone.isEmpty, phone.isEmpty { phone = info.phone }
         }
         if fullName.isEmpty { fullName = name }
-        alreadySubmitted = await FirebaseService.shared.hasSubmittedCampaign(uid: user.uid)
     }
 
     private func submit() async {
@@ -268,7 +274,6 @@ struct CampaignFormView: View {
                 submittedBy: user.email,
                 campaignName: campaign.campaignName
             )
-            alreadySubmitted = true
             submitted = true
         } catch {
             errorMessage = "Something went wrong. Please try again."
