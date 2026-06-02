@@ -34,9 +34,19 @@ struct CampaignBanner: View {
             }
 
             if let deadline = campaign.formattedDeadline {
-                Text("Campaign ends \(deadline)")
-                    .font(.caption)
-                    .foregroundColor(.cream.opacity(0.6))
+                HStack(spacing: 10) {
+                    Text("Campaign ends \(deadline)")
+                        .font(.caption)
+                        .foregroundColor(.cream.opacity(0.6))
+                    if campaign.showCountdown, let raw = campaign.deadline {
+                        CampaignCountdownView(deadline: raw)
+                    }
+                }
+            }
+
+            if campaign.showCampaignStatus, let slug = campaign.statusSlug {
+                CampaignProgressView(slug: slug)
+                    .padding(.top, 4)
             }
 
             Button(action: handleCreateTap) {

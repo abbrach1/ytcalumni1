@@ -384,6 +384,9 @@ struct FundraiserCampaign {
     let defaultGoal: String
     let defaultMessage: String
     let showLinkOnSubmit: Bool   // show "Visit the Campaign" on the success screen
+    let statusUrl: String        // source for the live progress bar (public or /api/.../details link)
+    let showCampaignStatus: Bool // show the live progress bar
+    let showCountdown: Bool      // show the "time left" countdown
 
     var formattedDeadline: String? {
         guard let deadline = deadline, !deadline.isEmpty else { return nil }
@@ -393,6 +396,24 @@ struct FundraiserCampaign {
         let out = DateFormatter()
         out.dateFormat = "MMMM d, yyyy"
         return out.string(from: date)
+    }
+
+    /// CharityExtra slug for the live status, taken from `statusUrl` (falling back
+    /// to `campaignUrl`). Returns nil when neither yields a usable slug.
+    var statusSlug: String? {
+        FundraiserCampaign.deriveCampaignSlug(statusUrl.isEmpty ? campaignUrl : statusUrl)
+    }
+
+    /// CharityExtra campaign pages live at `charityextra.com/{slug}` and their API
+    /// at `charityextra.com/api/{slug}/details`. Pull the slug from either form.
+    static func deriveCampaignSlug(_ urlString: String) -> String? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty,
+              let comps = URLComponents(string: trimmed) else { return nil }
+        let parts = comps.path.split(separator: "/").map(String.init)
+        guard let first = parts.first else { return nil }
+        if first == "api", parts.count >= 2 { return parts[1] }  // API form: /api/{slug}/details
+        return first                                              // public form: /{slug}
     }
 
     init?(document: DocumentSnapshot) {
@@ -409,5 +430,68 @@ struct FundraiserCampaign {
         self.defaultMessage = data["defaultMessage"] as? String ?? ""
         // Defaults true so the link keeps showing on existing campaigns until an admin turns it off.
         self.showLinkOnSubmit = data["showLinkOnSubmit"] as? Bool ?? true
+        self.statusUrl = data["statusUrl"] as? String ?? ""
+        // Default true so the progress bar/countdown show on existing campaigns until turned off.
+        self.showCampaignStatus = data["showCampaignStatus"] as? Bool ?? true
+        self.showCountdown = data["showCountdown"] as? Bool ?? true
+    }
+}
+
+// Live fundraising stats from the CharityExtra public API
+// (`https://www.charityextra.com/api/{slug}/details`). Native apps aren't subject
+// to CORS, so we fetch it directly — no proxy needed (unlike the website).
+struct CampaignStatus: Decodable {
+    let goal: Double
+    let goalBonus: Double
+    let amount: Double
+    let donations: Int
+    let multiplied: Int
+    let currency: String
+    let currencySymbol: String
+    let open: Bool
+    let isLive: Bool
+    let name: String
+    let knownAs: String
+
+    enum CodingKeys: String, CodingKey {
+        case goal, goalBonus, amount, donations, multiplied
+        case currency, currencySymbol, open, isLive, name, knownAs
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // CharityExtra returns goal/amount as numbers; decode leniently.
+        goal = (try? c.decode(Double.self, forKey: .goal)) ?? 0
+        goalBonus = (try? c.decode(Double.self, forKey: .goalBonus)) ?? 0
+        amount = (try? c.decode(Double.self, forKey: .amount)) ?? 0
+        donations = (try? c.decode(Int.self, forKey: .donations)) ?? 0
+        multiplied = (try? c.decode(Int.self, forKey: .multiplied)) ?? 1
+        currency = (try? c.decode(String.self, forKey: .currency)) ?? "USD"
+        currencySymbol = (try? c.decode(String.self, forKey: .currencySymbol)) ?? "$"
+        open = (try? c.decode(Bool.self, forKey: .open)) ?? false
+        isLive = (try? c.decode(Bool.self, forKey: .isLive)) ?? false
+        name = (try? c.decode(String.self, forKey: .name)) ?? ""
+        knownAs = (try? c.decode(String.self, forKey: .knownAs)) ?? ""
+    }
+
+    /// Raised as a % of goal, clamped 0–100.
+    var percent: Double {
+        guard goal > 0 else { return 0 }
+        return min(100, max(0, amount / goal * 100))
+    }
+
+    /// Fetch + decode the live status for a CharityExtra slug. Returns nil on any failure.
+    static func fetch(slug: String) async -> CampaignStatus? {
+        guard let encoded = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://www.charityextra.com/api/\(encoded)/details") else { return nil }
+        do {
+            var request = URLRequest(url: url)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            return try JSONDecoder().decode(CampaignStatus.self, from: data)
+        } catch {
+            return nil
+        }
     }
 }
