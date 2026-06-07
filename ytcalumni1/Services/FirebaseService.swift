@@ -260,6 +260,12 @@ class FirebaseService: ObservableObject {
         let doc = try await db.collection("settings").document("systemAnnouncement").getDocument()
         return SystemAnnouncement(document: doc)
     }
+
+    // MARK: - App Update prompt (remote-controlled from the website admin)
+    func fetchAppUpdateConfig() async throws -> AppUpdateConfig? {
+        let doc = try await db.collection("settings").document("appUpdate").getDocument()
+        return AppUpdateConfig(document: doc)
+    }
     
     // MARK: - Submissions
     func submitContactInfo(

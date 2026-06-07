@@ -500,3 +500,54 @@ struct CampaignStatus: Decodable {
         }
     }
 }
+
+// Remote-controlled "please update the app" prompt. The website admin writes this
+// to settings/appUpdate. Returns nil (no prompt) when the doc is missing or the
+// admin has it turned off. The app compares its installed version against
+// `latestVersion`; older installs see either a dismissable prompt or, when
+// `forceUpdate` is on, a full-screen blocker.
+struct AppUpdateConfig {
+    let latestVersion: String   // newest version in the App Store, e.g. "1.3.0"
+    let forceUpdate: Bool       // true = block the app until the user updates
+    let title: String
+    let message: String
+    let appStoreUrl: String
+
+    init?(document: DocumentSnapshot) {
+        guard let data = document.data(),
+              let enabled = data["enabled"] as? Bool, enabled else { return nil }
+        self.latestVersion = (data["latestVersion"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+        self.forceUpdate = data["forceUpdate"] as? Bool ?? false
+        let title = data["title"] as? String ?? ""
+        self.title = title.isEmpty ? "Update Available" : title
+        let message = data["message"] as? String ?? ""
+        self.message = message.isEmpty
+            ? "A new version of the app is available. Please update to continue."
+            : message
+        self.appStoreUrl = data["appStoreUrl"] as? String ?? ""
+    }
+
+    /// The installed app's short version (CFBundleShortVersionString).
+    static var currentVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+    }
+
+    /// True when the installed version is older than `latestVersion`.
+    var updateAvailable: Bool {
+        guard !latestVersion.isEmpty else { return false }
+        return AppUpdateConfig.compareVersions(AppUpdateConfig.currentVersion, latestVersion) < 0
+    }
+
+    /// Compare dotted numeric versions ("1.2.0" vs "1.10"). Missing components
+    /// count as 0. Returns -1 if a < b, 0 if equal, 1 if a > b.
+    static func compareVersions(_ a: String, _ b: String) -> Int {
+        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
+        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0
+            let y = i < pb.count ? pb[i] : 0
+            if x != y { return x < y ? -1 : 1 }
+        }
+        return 0
+    }
+}
