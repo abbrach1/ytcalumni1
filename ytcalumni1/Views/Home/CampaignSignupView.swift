@@ -11,6 +11,7 @@ struct CampaignBanner: View {
     @State private var showForm = false
     @State private var alreadySubmitted = false
     @State private var showResubmitConfirm = false
+    @State private var showIncentives = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -59,6 +60,23 @@ struct CampaignBanner: View {
                     .cornerRadius(10)
             }
             .padding(.top, 4)
+
+            if campaign.showIncentives, !campaign.incentivesImageUrl.isEmpty {
+                Button(action: { showIncentives = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "gift.fill")
+                        Text("See the Incentives")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.cream)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.cream.opacity(0.3), lineWidth: 1)
+                    )
+                }
+            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -67,6 +85,9 @@ struct CampaignBanner: View {
         .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 3)
         .sheet(isPresented: $showForm) {
             CampaignFormView(campaign: campaign)
+        }
+        .sheet(isPresented: $showIncentives) {
+            CampaignIncentivesView(imageUrl: campaign.incentivesImageUrl)
         }
         .task { await checkAlreadySubmitted() }
         .confirmationDialog(
@@ -94,6 +115,52 @@ struct CampaignBanner: View {
     private func checkAlreadySubmitted() async {
         guard let uid = Auth.auth().currentUser?.uid else { return }
         alreadySubmitted = await FirebaseService.shared.hasSubmittedCampaign(uid: uid)
+    }
+}
+
+// Pop-up that shows the admin-uploaded incentives picture. Mirrors the website's
+// "See the Incentives" dialog.
+struct CampaignIncentivesView: View {
+    let imageUrl: String
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView([.vertical, .horizontal]) {
+                AsyncImage(url: URL(string: imageUrl)) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                    case .failure:
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo")
+                                .font(.system(size: 40))
+                                .foregroundColor(.navy.opacity(0.3))
+                            Text("Couldn't load the image")
+                                .font(.subheadline)
+                                .foregroundColor(.navy.opacity(0.6))
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 200)
+                    default:
+                        ProgressView()
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    }
+                }
+                .padding()
+            }
+            .background(Color.cream.ignoresSafeArea())
+            .navigationTitle("Incentives")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(.navy)
+                }
+            }
+        }
     }
 }
 

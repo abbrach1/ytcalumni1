@@ -387,6 +387,8 @@ struct FundraiserCampaign {
     let statusUrl: String        // source for the live progress bar (public or /api/.../details link)
     let showCampaignStatus: Bool // show the live progress bar
     let showCountdown: Bool      // show the "time left" countdown
+    let showIncentives: Bool     // show the "See the Incentives" button + picture popup
+    let incentivesImageUrl: String // picture shown when the user taps "See the Incentives"
 
     var formattedDeadline: String? {
         guard let deadline = deadline, !deadline.isEmpty else { return nil }
@@ -434,6 +436,9 @@ struct FundraiserCampaign {
         // Default true so the progress bar/countdown show on existing campaigns until turned off.
         self.showCampaignStatus = data["showCampaignStatus"] as? Bool ?? true
         self.showCountdown = data["showCountdown"] as? Bool ?? true
+        // Default false to match the website; only shows once an admin uploads a picture and enables it.
+        self.showIncentives = data["showIncentives"] as? Bool ?? false
+        self.incentivesImageUrl = data["incentivesImageUrl"] as? String ?? ""
     }
 }
 
